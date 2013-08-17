@@ -12,7 +12,7 @@
 
 #include "regex_url.h"
 
-#define PHP_URL "http://localhost:8080/"
+#define PHP_URL "http://localhost:8080/sockssrv.php"
 #define BIND_PORT 3443
 #define BIND_IP "127.0.0.1"
 
@@ -25,7 +25,13 @@ int http_sock = -1;
 	this socket is used to accept the connection
 	established by the php script
 */
+int rev_listen_sock = -1;
+/*
+	accepted client socket
+*/
 int rev_sock = -1;
+
+fd_set pub_fds;
 
 static int
 create_tcp_socket()
@@ -53,9 +59,9 @@ init_sockets()
 	if (http_sock == -1)
 		return -1;
 	
-	rev_sock = create_tcp_socket();
+	rev_listen_sock = create_tcp_socket();
 
-	if (rev_sock == -1)
+	if (rev_listen_sock == -1)
 		return -1;
 
 	/* bind listening socket */
@@ -66,14 +72,14 @@ init_sockets()
 	addr.sin_port = htons(BIND_PORT);
 	addr.sin_family = AF_INET;
 
-	if (bind(rev_sock, (struct sockaddr*)&addr, sizeof(addr)) != 0)
+	if (bind(rev_listen_sock, (struct sockaddr*)&addr, sizeof(addr)) != 0)
 	{
 		printf("bind() : %s\n", strerror(errno));
 		goto err_cls_socks;
 	}
 
 	/* listening mode */
-	if (listen(rev_sock, 1) != 0)
+	if (listen(rev_listen_sock, 1) != 0)
 	{
 		printf("listen() : %s\n", strerror(errno));
 		goto err_cls_socks;
@@ -84,7 +90,7 @@ init_sockets()
 	return 0;
 err_cls_socks:
 	close(http_sock);
-	close(rev_sock);
+	close(rev_listen_sock);
 	return -1;
 }
 
@@ -163,9 +169,9 @@ init_http(int s, const char *url)
 
 	/* build request */
 	if (port == -1)
-		snprintf(buf, sizeof(buf), "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", uri, host);
+		snprintf(buf, sizeof(buf), "GET %s HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", uri, host);
 	else
-		snprintf(buf, sizeof(buf), "GET %s HTTP/1.1\r\nHost: %s:%d\r\n\r\n", uri, host, port);
+		snprintf(buf, sizeof(buf), "GET %s HTTP/1.1\r\nHost: %s:%d\r\nConnection: close\r\n\r\n", uri, host, port);
 	
 	/* send request */
 	send(http_sock, buf, strlen(buf), 0);
@@ -173,14 +179,178 @@ init_http(int s, const char *url)
 	return 0;
 }
 
+static int
+max(int x, int y)
+{
+	if (x > y)
+		return x;
+	return y;
+}
+
+static int
+accept_client()
+{
+	if (!FD_ISSET(rev_listen_sock, &pub_fds))
+		return -1;
+
+	struct sockaddr_in addr;
+	socklen_t addr_size = sizeof(addr);
+
+	int res = accept(rev_listen_sock, (struct sockaddr*)&addr, &addr_size);
+
+	if (res == -1)
+	{
+		printf("error accept() : %s\n", strerror(errno));
+		return -1;
+	}
+	
+	rev_sock = res;
+	return 0;
+}
+
+static int
+http_alive()
+{
+	char buf[2048];
+
+	if (!FD_ISSET(http_sock, &pub_fds))
+		return 1; /* still alive */
+	
+	int res = recv(http_sock, buf, sizeof(buf), 0);
+
+	if (res == 0)
+	{
+		printf("http endpoint closed the connection\n");
+		return 0;
+	}
+	else if(res == -1)
+	{
+		printf("http sock error : %s\n", strerror(errno));
+		return 0;
+	}
+	else
+		printf("Warning: http endpoint returned data (%d bytes)\n", res);
+
+	return 1;
+}
+
+static int
+handle_tunnel()
+{
+	if (!FD_ISSET(rev_sock, &pub_fds))
+		return 0;
+	
+	char buf[2048];
+
+	int res = recv(rev_sock, buf, sizeof(buf), 0);
+
+	if (res == 0)
+	{
+		printf("tunnel connection has been closed\n");
+		return -1;
+	}
+	else if (res == -1)
+	{
+		printf("rev sock error : %s\n", strerror(errno));
+		return -1;
+	}
+	else
+		printf("got %d bytes from rev socket\n", res);
+	
+	return 0;
+}
+
+enum
+{
+	AWAITING_REV=0,
+	REV_CONNECTED,
+	REV_INTERRUPTED,
+};
+
 int
 main(int argc, char **argv)
 {
+	char http_url[256];
+	int state;
+
 	if (init_sockets() != 0)
 		return EXIT_FAILURE;
 
-	if (init_http(http_sock, PHP_URL) == 0)
+	snprintf(http_url, sizeof(http_url), "%s?ip=%s&port=%d", PHP_URL, BIND_IP, BIND_PORT);
+
+	if (init_http(http_sock, http_url) == 0)
 		printf("http request pending...\n");
+	else
+	{
+		printf("http session could not be initiated\n");
+		close(http_sock);
+		return EXIT_FAILURE;
+	}
+
+	/* wait for connection on ref socket */
+	state = AWAITING_REV;
+	while (1)
+	{
+		int high_desc = -1;
+
+		FD_ZERO(&pub_fds);
+		
+		FD_SET(http_sock, &pub_fds);
+		high_desc = http_sock;
+	
+		if (state == AWAITING_REV)
+		{
+			FD_SET(rev_listen_sock, &pub_fds);
+			high_desc = max(high_desc, rev_listen_sock);
+		}
+		else if(state == REV_CONNECTED)
+		{
+			FD_SET(rev_sock, &pub_fds);
+			high_desc = max(high_desc, rev_sock);
+		}
+
+		select(high_desc+1, &pub_fds, NULL, NULL, NULL);
+
+		if (!http_alive())
+		{
+			/*
+				the http server closed the connection
+				(hopefully it's a cgi timeout)
+			*/
+
+			close(http_sock);
+
+			if (state == REV_CONNECTED)
+			{
+				close(rev_sock);
+				rev_sock = -1;
+			}
+
+			break;
+		}
+
+		if (state == AWAITING_REV)
+		{
+			if (accept_client() == 0)
+			{
+				/* php socks ack */
+				state = REV_CONNECTED;
+				printf("php sockssrv acknowledged! tunnel initiated\n");
+			}
+		}
+		else if (state == REV_CONNECTED)
+		{
+			if (handle_tunnel() != 0)
+			{
+				/* connection closed */
+				close(rev_sock);
+				rev_sock = -1;
+				state = REV_INTERRUPTED;
+			}
+		}
+
+		printf("tick\n");
+	}
 
 	return EXIT_SUCCESS;
 }
