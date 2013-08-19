@@ -7,6 +7,8 @@ enum
 
 	// msg types
 	MSG_DBGMSG=0,
+	MSG_PING,
+	MSG_PONG,
 };
 
 #endif

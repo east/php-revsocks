@@ -269,6 +269,37 @@ rev_send_data()
 	}
 }
 
+static void
+handle_in_data()
+{
+	int buf_size = fifo_len(&rev_in_buf);
+
+	if (buf_size < 3)
+		return;
+	
+	int msg_size = *((uint16_t*)rev_in_buf.data);
+	int msg_id = *((uint8_t*)(rev_in_buf.data+2));
+
+	if (buf_size < 3 + msg_size)
+		return; /* not enough data */
+
+	/* skip size & id */
+	fifo_read(&rev_in_buf, NULL, 3);
+
+	if (msg_id == MSG_DBGMSG)
+	{
+		printf("got dbgmsg: %s\n", rev_in_buf.data);
+		fifo_read(&rev_in_buf, NULL, msg_size);
+	}
+	else if(msg_id == MSG_PONG)
+		printf("got pong\n");
+	else
+		/* skip message */
+		fifo_read(&rev_in_buf, NULL, msg_size);
+
+	printf("got message of type %d len %d\n", msg_id, msg_size);
+}
+
 static int
 handle_tunnel()
 {
@@ -278,24 +309,33 @@ handle_tunnel()
 	if (!FD_ISSET(rev_sock, &pub_fds))
 		return 0;
    
-   char buf[2048];
+	char buf[2048];
+	int res = recv(rev_sock, buf, sizeof(buf), 0);
 
-   int res = recv(rev_sock, buf, sizeof(buf), 0);
+	if (res == 0)
+	{
+		printf("tunnel connection has been closed\n");
+		return -1;
+	}
+	else if (res == -1)
+	{
+		printf("rev sock error : %s\n", strerror(errno));
+		return -1;
+	}
+	else
+	{
+		printf("got %d bytes from rev socket\n", res);
+		
+		if (fifo_write(&rev_in_buf, buf, res) != 0)
+		{
+			printf("tcp buffer overflow (in)\n");
+			assert(0);
+		}
+		
+		handle_in_data();
+	}
 
-   if (res == 0)
-   {
-	   printf("tunnel connection has been closed\n");
-	   return -1;
-   }
-   else if (res == -1)
-   {
-	   printf("rev sock error : %s\n", strerror(errno));
-	   return -1;
-   }
-   else
-	   printf("got %d bytes from rev socket\n", res);
-   
-   return 0;
+	return 0;
 }
 
 static void
@@ -413,8 +453,7 @@ main(int argc, char **argv)
 				printf("php sockssrv acknowledged! tunnel initiated\n");
 				
 				//TESTING
-				rev_send_dbg("hello");
-				rev_send_dbg("hello you");
+				rev_send_msg(MSG_PING, NULL, 0);
 			}
 		}
 		else if (state == REV_CONNECTED)
