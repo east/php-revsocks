@@ -45,8 +45,8 @@ int fifo_read(struct FIFOBUF *buf, char *out, uint64_t size)
 	if (out)
 		memcpy(out, buf->data, size);
 	
-	memmove(buf->data + size,
-				buf->data,
+	memmove(buf->data,
+				buf->data+size,
 				fifo_len(buf));
 	buf->offset -= size;
 
