@@ -269,19 +269,20 @@ rev_send_data()
 	}
 }
 
-static void
+/* returns nonzero when their might be data left */
+static int
 handle_in_data()
 {
 	int buf_size = fifo_len(&rev_in_buf);
 
 	if (buf_size < 3)
-		return;
+		return 0;
 	
 	int msg_size = *((uint16_t*)rev_in_buf.data);
 	int msg_id = *((uint8_t*)(rev_in_buf.data+2));
 
 	if (buf_size < 3 + msg_size)
-		return; /* not enough data */
+		return 0; /* not enough data */
 
 	/* skip size & id */
 	fifo_read(&rev_in_buf, NULL, 3);
@@ -293,11 +294,26 @@ handle_in_data()
 	}
 	else if(msg_id == MSG_PONG)
 		printf("got pong\n");
+	else if(msg_id == MSG_CONN_STATE)
+	{
+		int sess_id = *((uint16_t*)rev_in_buf.data);
+		int state = *((uint8_t*)&rev_in_buf.data[2]);
+
+		if (state == CONN_STATE_ERROR)
+			printf("session id %d error '%s'\n", sess_id, rev_in_buf.data+3);
+		else
+			printf("session id %d connection established\n", sess_id);
+		fifo_read(&rev_in_buf, NULL, msg_size);
+	}
 	else
+	{
 		/* skip message */
 		fifo_read(&rev_in_buf, NULL, msg_size);
+		printf("got unknown message of type %d len %d\n", msg_id, msg_size);
+	}
 
-	printf("got message of type %d len %d\n", msg_id, msg_size);
+	/* their might be data left */
+	return 1;
 }
 
 static int
@@ -324,15 +340,13 @@ handle_tunnel()
 	}
 	else
 	{
-		printf("got %d bytes from rev socket\n", res);
-		
 		if (fifo_write(&rev_in_buf, buf, res) != 0)
 		{
 			printf("tcp buffer overflow (in)\n");
 			assert(0);
 		}
 		
-		handle_in_data();
+		while (handle_in_data());
 	}
 
 	return 0;
@@ -363,6 +377,19 @@ rev_send_dbg(const char *dbgmsg)
 {
 	int len = strlen(dbgmsg);
 	rev_send_msg(MSG_DBGMSG, dbgmsg, len+1);
+}
+
+static void
+rev_send_tcp_ipv4_init(int id, const char *addr, int port)
+{
+	char buf[9];
+	
+	*((uint16_t*)buf) = id;
+	*((uint16_t*)(buf+2)) = ADDR_IPV4;
+	*((uint32_t*)(buf+3)) = *((uint32_t*)addr);
+	*((uint16_t*)(buf+7)) = port;
+
+	rev_send_msg(MSG_CONNECT, buf, 9);
 }
 
 enum
@@ -454,6 +481,9 @@ main(int argc, char **argv)
 				
 				//TESTING
 				rev_send_msg(MSG_PING, NULL, 0);
+
+				const char lo_ip[] = {127, 0, 0, 1};
+				rev_send_tcp_ipv4_init(1, lo_ip, 8080);
 			}
 		}
 		else if (state == REV_CONNECTED)
