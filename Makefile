@@ -1,12 +1,12 @@
 CC = gcc
 CFLAGS = -Wall -Wno-unused-function -g
 LIBS = 
-OBJS = main.o regex_url.o fifobuf.o
+OBJS = regex_url.o fifobuf.o system.o rev_server.o
 
-all: test
+all: rev_server
 
 clean:
-	rm -Rf test *.o
+	rm -Rf rev_server *.o
 
-test: $(OBJS)
-	$(CC) -o test $(OBJS) $(CFLAGS) $(LIBS)
+rev_server: $(OBJS)
+	$(CC) -o rev_server $(OBJS) $(CFLAGS) $(LIBS)

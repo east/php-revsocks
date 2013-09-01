@@ -23,7 +23,7 @@ parse_url(const char *url, char *protocol, char *host, int *port, char *uri)
 {
 	const int max_matches = 6;
 	regex_t regex;
-	int reti;
+	int reti, ret_val;
 	regmatch_t matches[max_matches];
 
 	*port = -1;
@@ -37,7 +37,10 @@ parse_url(const char *url, char *protocol, char *host, int *port, char *uri)
 		int num_matches = regex_num_matches(matches, max_matches);
 
 		if (num_matches != 4 && num_matches != 5)
-			return -1;
+		{
+			ret_val = -1;
+			goto _exit;
+		}
 	
 		int i, cur;
 		for (i = 0, cur = 0; i < max_matches; i++)
@@ -78,11 +81,16 @@ parse_url(const char *url, char *protocol, char *host, int *port, char *uri)
 			cur++;
 		}
 
-		return 0;
+		ret_val = 0;
+		goto _exit;
 	}
 	else if (reti == REG_NOMATCH)
-		return -2;
+		ret_val = -2;
 	else
-		return -3;
+		ret_val = -3;
+
+_exit:
+	regfree(&regex);
+	return ret_val;	
 }
 
