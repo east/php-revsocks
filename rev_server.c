@@ -19,7 +19,7 @@ init_client(struct rev_client *cl)
 {
 	cl->sock = -1;
 
-	fifo_init(&cl->rev_out_buf, malloc(TCP_BUF_SIZE), TCP_BUF_SIZE);
+	fifo_init(&cl->rev_in_buf, malloc(TCP_BUF_SIZE), TCP_BUF_SIZE);
 	fifo_init(&cl->rev_out_buf, malloc(TCP_BUF_SIZE), TCP_BUF_SIZE);
 }
 
@@ -39,8 +39,10 @@ void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 					int bind_port, const char *http_url)
 {
 	reset_http_idlers(revsrv);
+
 	revsrv->rev_listen_sock = create_tcp_socket();
-	
+	socket_set_linger(revsrv->rev_listen_sock);
+
 	init_client(&revsrv->clients[0]);
 	init_client(&revsrv->clients[1]);
 
@@ -239,6 +241,39 @@ reset_fds(struct rev_server *revsrv)
 	FD_ZERO(&revsrv->write_fds);
 }
 
+static void
+handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
+{
+	if (FD_ISSET(cl->sock, &revsrv->read_fds))
+	{
+		char buf[2048];
+		/* receive data */
+		int res = recv(cl->sock, buf, sizeof(buf), 0);
+
+		if (res <= 0)
+		{
+			if (res == 0)
+				printf("rev client disconnected\n");
+			else
+				printf("rev client recv() : %s\n", strerror(errno));
+
+			close(cl->sock);
+			cl->sock = -1;
+		}
+		else
+		{
+			/* store data */
+			if (fifo_write(&cl->rev_in_buf, buf, res) != 0)
+			{
+				printf("rev client tcp in buffer is full\n");
+				ASSERT(0, "tcp in buf overflow")
+			}
+
+			printf("stored %d bytes\n", res);
+		}
+	}
+}
+
 void
 revsrv_run(struct rev_server *revsrv)
 {
@@ -274,7 +309,15 @@ revsrv_run(struct rev_server *revsrv)
 	
 		/* add socket descriptors to select */
 		http_idlers_add_fds(revsrv);
-		add_read_fd(revsrv, revsrv->rev_listen_sock);
+		
+		if (revsrv->clients[0].sock == -1 ||
+				revsrv->clients[1].sock == -1)
+			add_read_fd(revsrv, revsrv->rev_listen_sock);
+
+		if (revsrv->clients[0].sock != -1)
+			add_read_fd(revsrv, revsrv->clients[0].sock);
+		if (revsrv->clients[1].sock != -1)
+			add_read_fd(revsrv, revsrv->clients[1].sock);
 
 		/* do select if necessary */
 		if (revsrv->high_desc != -1)
@@ -302,22 +345,33 @@ revsrv_run(struct rev_server *revsrv)
 		if (FD_ISSET(revsrv->rev_listen_sock,
 			&revsrv->read_fds))
 		{
-			struct rev_client *cl;
+			struct rev_client *cl = NULL;
 			
 			if (revsrv->clients[1].sock == -1)
 				cl = &revsrv->clients[1];
 			if (revsrv->clients[0].sock == -1)
 				cl = &revsrv->clients[0];
 
-			cl->sock = accept(revsrv->rev_listen_sock, NULL, NULL);
-			ASSERT(cl->sock != -1, "accept() returned -1")
+			if (!cl)
+				printf("Warning: can't accept more rev clients\n");
+			else
+			{
+				cl->sock = accept(revsrv->rev_listen_sock, NULL, NULL);
+				ASSERT(cl->sock != -1, "accept() returned -1")
 			
-			/* empty tcp buffers */
-			fifo_clean(&cl->rev_in_buf);
-			fifo_clean(&cl->rev_out_buf);
+				/* empty tcp buffers */
+				fifo_clean(&cl->rev_in_buf);
+				fifo_clean(&cl->rev_out_buf);
 
-			printf("rev client accepted\n");
+				printf("rev client accepted\n");
+			}
 		}
+
+		/* rev clients */
+		if (revsrv->clients[0].sock != -1)
+			handle_rev_client(revsrv, &revsrv->clients[0]);
+		if (revsrv->clients[1].sock != -1)
+			handle_rev_client(revsrv, &revsrv->clients[1]);
 	}
 }
 

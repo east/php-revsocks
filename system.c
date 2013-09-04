@@ -12,7 +12,8 @@
 
 #include "system.h"
 
-int create_tcp_socket()
+int
+create_tcp_socket()
 {
    int sock = socket(AF_INET, SOCK_STREAM, 0); 
 
@@ -25,10 +26,21 @@ int create_tcp_socket()
    return sock;
 }
 
-
-void socket_set_block(int sock, int block)
+void
+socket_set_block(int sock, int block)
 {
 	block = !block;
 	ioctl(sock, FIONBIO, &block);
 }
 
+void
+socket_set_linger(int sock)
+{
+   /* make this socket reusable */
+   struct linger li;
+
+   li.l_onoff = 1;
+   li.l_linger = 0;
+   setsockopt(sock, SOL_SOCKET, SO_LINGER,
+			   &li, sizeof(struct linger));
+}
