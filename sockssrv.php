@@ -154,7 +154,11 @@
 	if ($res)
 		dbg_log("connected");
 	else
-		dbg_log("failed to connect") and die("asd");
+	{
+		dbg_log("failed to connect");
+		sleep(100);
+		exit();
+	}
 
 	send_dbg("hallo");
 

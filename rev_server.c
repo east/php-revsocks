@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <sys/ioctl.h>
 #include <netdb.h>
+#include <time.h>
 
 #include "system.h"
 #include "regex_url.h"
@@ -47,6 +48,9 @@ void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 	revsrv->bind_port = bind_port;
 
 	strncpy(revsrv->http_url, http_url, sizeof(revsrv->http_url));
+
+	revsrv->new_idler_date = 0;
+	revsrv->last_idler_lifetime = -1;
 }
 
 static int
@@ -64,6 +68,7 @@ init_http_idler(struct rev_server *revsrv)
 
 	struct http_idler *http_cl = &revsrv->http_idlers[i];
 	char protocol[8];
+	char buf[256];
 	int port;
 	struct hostent *host_addr;
 	int res;
@@ -87,6 +92,13 @@ init_http_idler(struct rev_server *revsrv)
 	{
 		printf("failed to resolve '%s'\n", http_cl->http_host);
 		return -2;
+	}
+
+	/* add port to http host if necessary */
+	if (port != -1)
+	{
+		snprintf(buf, sizeof(buf), ":%d", port);
+		strncat(http_cl->http_host, buf, sizeof(http_cl->http_host));
 	}
 
 	/* build socket */
@@ -146,6 +158,7 @@ handle_http_idlers(struct rev_server *revsrv)
 {
 	int idlers_online = 0;
 	int i;
+	time_t now = time(NULL);
 
 	for (i = 0; i < MAX_HTTP_IDLERS; i++)
 	{
@@ -163,7 +176,20 @@ handle_http_idlers(struct rev_server *revsrv)
 			if (res == 0)
 			{
 				printf("connection of %d established\n", i);
+
+				/* send request */
+				char buf[1024];
+				int len = snprintf(buf, sizeof(buf),
+									"GET %s?ip=%s&port=%d HTTP/1.1\r\n"
+									"Host: %s\r\n"
+									"Connection: close\r\n"
+									"\r\n",
+									cl->http_uri, revsrv->bind_ip,
+									revsrv->bind_port, cl->http_host);
+				send(cl->sock, buf, len, 0);
+
 				cl->state = HTTP_IDLER_ONLINE;
+				cl->date = now;
 			}
 			else
 			{
@@ -172,10 +198,36 @@ handle_http_idlers(struct rev_server *revsrv)
 				cl->state = HTTP_IDLER_OFFLINE;
 			}
 		}
+		else if(cl->state == HTTP_IDLER_ONLINE && FD_ISSET(cl->sock, &revsrv->read_fds))
+		{
+			/* receive data */
+			char buf[2048];
+			int res = recv(cl->sock, buf, sizeof(buf), 0);
+
+			if (res <= 0)
+			{
+				if (res == 0)
+					printf("http idler %d disconnected (%d seconds online)\n", i, (int)(now-cl->date));
+				else
+					printf("http idler error recv() : %s\n", strerror(errno));
+
+				close(cl->sock);
+				cl->state = HTTP_IDLER_OFFLINE;
+
+				revsrv->last_idler_lifetime = (int)(now-cl->date);
+			}
+		}
 	}
 
-	if (!idlers_online)
+	if ((revsrv->new_idler_date != -1 && revsrv->new_idler_date <= now) ||
+			idlers_online == 0)
+	{
 		init_http_idler(revsrv);
+		revsrv->new_idler_date = -1;
+
+		if (revsrv->last_idler_lifetime > 0)
+			revsrv->new_idler_date = now+revsrv->last_idler_lifetime/2;
+	}
 }
 
 static void
@@ -190,34 +242,82 @@ reset_fds(struct rev_server *revsrv)
 void
 revsrv_run(struct rev_server *revsrv)
 {
+	/* bind listening socket */
+	//TODO: do this socket family independent
+	struct sockaddr_in addr;
+
+	memset(&addr, 0, sizeof(struct sockaddr_in));
+	addr.sin_addr.s_addr = inet_addr(revsrv->bind_ip);
+	addr.sin_port = htons(revsrv->bind_port);
+	addr.sin_family = AF_INET;
+	
+	if (bind(revsrv->rev_listen_sock,
+		(struct sockaddr*)&addr, sizeof(addr)) != 0)
+	{
+		printf("bind() : %s\n", strerror(errno));
+		return;
+	}
+
+	/* listening mode */
+	if (listen(revsrv->rev_listen_sock, 2) != 0)
+	{
+		printf("listen() : %s\n", strerror(errno));
+		return;
+	}
+
+	printf("listening on %s:%d\n", revsrv->bind_ip, revsrv->bind_port);
+	
 	/* Mainloop */
 	while(1)
 	{
-		printf("tick\n");
 		reset_fds(revsrv);
 	
 		/* add socket descriptors to select */
 		http_idlers_add_fds(revsrv);
+		add_read_fd(revsrv, revsrv->rev_listen_sock);
 
 		/* do select if necessary */
 		if (revsrv->high_desc != -1)
 		{
 			/* select */
 			int res;
+			struct timeval tv;
+
+			/* select timeout after one second */
+			tv.tv_sec = 1;
+			tv.tv_usec = 0;
+
 			if ((res = select(revsrv->high_desc+1, &revsrv->read_fds,
-					&revsrv->write_fds, NULL, NULL)) == -1)
+					&revsrv->write_fds, NULL, &tv)) == -1)
 			{
 				printf("select() failed : %s\n", strerror(errno));
 				ASSERT(0, "select failed");
 			}
 		}
 		else
-		{
-			printf("Warning: no fds for polling\n");
-			sleep(1); /* prevent cpu load */
-		}
+			usleep(1000); /* prevent cpu load */
 		
 		handle_http_idlers(revsrv);
+
+		if (FD_ISSET(revsrv->rev_listen_sock,
+			&revsrv->read_fds))
+		{
+			struct rev_client *cl;
+			
+			if (revsrv->clients[1].sock == -1)
+				cl = &revsrv->clients[1];
+			if (revsrv->clients[0].sock == -1)
+				cl = &revsrv->clients[0];
+
+			cl->sock = accept(revsrv->rev_listen_sock, NULL, NULL);
+			ASSERT(cl->sock != -1, "accept() returned -1")
+			
+			/* empty tcp buffers */
+			fifo_clean(&cl->rev_in_buf);
+			fifo_clean(&cl->rev_out_buf);
+
+			printf("rev client accepted\n");
+		}
 	}
 }
 

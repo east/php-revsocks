@@ -62,6 +62,10 @@ struct rev_server
 	int high_desc;
 	fd_set read_fds;
 	fd_set write_fds;
+
+	/* used to create http idlers periodically */
+	time_t new_idler_date;
+	int last_idler_lifetime;
 };
 
 void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
