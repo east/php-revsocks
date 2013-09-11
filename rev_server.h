@@ -3,6 +3,8 @@
 
 #include "fifobuf.h"
 
+#include <netinet/in.h>
+
 enum
 {
 	TCP_BUF_SIZE=4096,

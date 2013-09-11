@@ -12,6 +12,7 @@
 
 #include "system.h"
 #include "regex_url.h"
+#include "rev_network.h"
 #include "rev_server.h"
 
 static void
@@ -225,10 +226,10 @@ handle_http_idlers(struct rev_server *revsrv)
 			idlers_online == 0)
 	{
 		init_http_idler(revsrv);
-		revsrv->new_idler_date = -1;
+		revsrv->new_idler_date = /*-1*/ now+10;
 
-		if (revsrv->last_idler_lifetime > 0)
-			revsrv->new_idler_date = now+revsrv->last_idler_lifetime/2;
+	//	if (revsrv->last_idler_lifetime > 0)
+	//		revsrv->new_idler_date = now+revsrv->last_idler_lifetime/2;
 	}
 }
 
@@ -244,6 +245,8 @@ reset_fds(struct rev_server *revsrv)
 static void
 handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 {
+	int disc_client = 0;
+
 	if (FD_ISSET(cl->sock, &revsrv->read_fds))
 	{
 		char buf[2048];
@@ -272,6 +275,30 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 			printf("stored %d bytes\n", res);
 		}
 	}
+
+	/* network handler */
+	pump_network(revsrv, cl);
+
+	/* send queued data */
+	int to_send = fifo_len(&cl->rev_out_buf);
+	if (to_send > 0)
+	{
+		int bytes = send(cl->sock, cl->rev_out_buf.data, to_send, 0);
+
+		if (bytes == -1)
+		{
+			printf("rev cl send() : %s\n", strerror(errno));
+			disc_client = 1;
+		}
+		else
+			fifo_read(&cl->rev_out_buf, NULL, bytes);
+
+		printf("cl %d bytes sent\n", bytes);
+	}
+
+
+	if (disc_client)
+		close(cl->sock);
 }
 
 void
@@ -309,16 +336,21 @@ revsrv_run(struct rev_server *revsrv)
 	
 		/* add socket descriptors to select */
 		http_idlers_add_fds(revsrv);
+		add_read_fd(revsrv, revsrv->rev_listen_sock);
+
+		int i;
+		for (i = 1; i >= 0; i--)
+		{
+			if (revsrv->clients[i].sock == -1)
+				continue;
+			
+			add_read_fd(revsrv, revsrv->clients[i].sock);
+
+			/* if we need to send data select() should break when we are able to do it */
+			if (fifo_len(&revsrv->clients[i].rev_out_buf) > 0)
+				add_write_fd(revsrv, revsrv->clients[i].sock);
+		}
 		
-		if (revsrv->clients[0].sock == -1 ||
-				revsrv->clients[1].sock == -1)
-			add_read_fd(revsrv, revsrv->rev_listen_sock);
-
-		if (revsrv->clients[0].sock != -1)
-			add_read_fd(revsrv, revsrv->clients[0].sock);
-		if (revsrv->clients[1].sock != -1)
-			add_read_fd(revsrv, revsrv->clients[1].sock);
-
 		/* do select if necessary */
 		if (revsrv->high_desc != -1)
 		{
@@ -346,19 +378,26 @@ revsrv_run(struct rev_server *revsrv)
 			&revsrv->read_fds))
 		{
 			struct rev_client *cl = NULL;
-			
+			int tmp_sock;
+
 			if (revsrv->clients[1].sock == -1)
 				cl = &revsrv->clients[1];
 			if (revsrv->clients[0].sock == -1)
 				cl = &revsrv->clients[0];
 
+			tmp_sock = accept(revsrv->rev_listen_sock, NULL, NULL);
+			ASSERT(tmp_sock != -1, "accept() returned -1")
+
 			if (!cl)
+			{
 				printf("Warning: can't accept more rev clients\n");
+				close(tmp_sock);
+			}
 			else
 			{
-				cl->sock = accept(revsrv->rev_listen_sock, NULL, NULL);
-				ASSERT(cl->sock != -1, "accept() returned -1")
-			
+				/* add client */
+				cl->sock = tmp_sock;
+
 				/* empty tcp buffers */
 				fifo_clean(&cl->rev_in_buf);
 				fifo_clean(&cl->rev_out_buf);

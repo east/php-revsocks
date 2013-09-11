@@ -149,14 +149,16 @@
 	$srv_sock = socket_create(AF_INET, SOCK_STREAM, 0);
 	
 	socket_set_block($srv_sock);
+
+	dbg_log("connecting...");
+
 	@$res = socket_connect($srv_sock, $dst_ip, $dst_port);
 
 	if ($res)
-		dbg_log("connected");
+		dbg_log("connected ".$res);
 	else
 	{
 		dbg_log("failed to connect");
-		sleep(100);
 		exit();
 	}
 
