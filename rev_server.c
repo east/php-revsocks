@@ -47,6 +47,8 @@ void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 	init_client(&revsrv->clients[0]);
 	init_client(&revsrv->clients[1]);
 
+	revsrv->usable_cl = NULL;
+
 	strncpy(revsrv->bind_ip, bind_ip, sizeof(revsrv->bind_ip));
 	revsrv->bind_port = bind_port;
 
@@ -54,6 +56,11 @@ void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 
 	revsrv->new_idler_date = 0;
 	revsrv->last_idler_lifetime = -1;
+
+	/* reset tcp connection id pool */
+	int i;
+	for (i = 0; i < MAX_TCP_CONNECTIONS; i++)
+		revsrv->tcp_conn_pool[i] = CONN_STATE_OFFLINE;
 }
 
 static int
@@ -277,7 +284,7 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 	}
 
 	/* network handler */
-	pump_network(revsrv, cl);
+	rev_pump_network(revsrv, cl);
 
 	/* send queued data */
 	int to_send = fifo_len(&cl->rev_out_buf);
@@ -298,7 +305,11 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 
 
 	if (disc_client)
+	{
+		if (revsrv->usable_cl == cl)
+			revsrv->usable_cl = NULL;
 		close(cl->sock);
+	}
 }
 
 void
@@ -402,7 +413,14 @@ revsrv_run(struct rev_server *revsrv)
 				fifo_clean(&cl->rev_in_buf);
 				fifo_clean(&cl->rev_out_buf);
 
+				//TODO: do this more smart
+				revsrv->usable_cl = cl;
+
 				printf("rev client accepted\n");
+
+				const char lo_ip[] = {127, 0, 0, 1};
+				int id = rev_init_conn(revsrv, ADDR_IPV4, lo_ip, 8080);
+				printf("NEW conn id %d\n", id);
 			}
 		}
 
@@ -430,3 +448,35 @@ main(int argc, char **argv)
 
 	return EXIT_SUCCESS;	
 }
+
+struct rev_client*
+revsrv_usable_cl(struct rev_server *revsrv)
+{
+	if (!revsrv->usable_cl)
+		printf("Warning: no usable cl selected\n");
+	return revsrv->usable_cl;
+}
+
+int revsrv_new_conn_id(struct rev_server *revsrv)
+{
+	int i;
+	for (i = 0; i < MAX_TCP_CONNECTIONS; i++) {
+		if (revsrv->tcp_conn_pool[i] == CONN_STATE_OFFLINE)
+			break;
+	}
+
+	if (i == MAX_TCP_CONNECTIONS)
+	{
+		printf("Warning: tcp connection id pool full");
+		return -1;
+	}
+
+	return i;
+}
+
+void revsrv_free_conn_id(struct rev_server *revsrv, int id)
+{
+	ASSERT(id >= 0 && id <= MAX_TCP_CONNECTIONS, "invalid tcp conn id")
+	revsrv->tcp_conn_pool[id] = CONN_STATE_OFFLINE;
+}
+

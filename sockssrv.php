@@ -33,7 +33,10 @@
 			dbg_log("dbgmsg: ".$str);
 		}
 		else if ($msg_id == MSG_PING)
+		{
+			dbg_log("got ping, send pong");
 			send_msg(MSG_PONG);
+		}
 		else if ($msg_id == MSG_CONNECT)
 		{
 			$s_id = buf_get_uint16($tcp_in_buf);
@@ -138,6 +141,8 @@
 	// connection states
 	const CONN_STATE_ONLINE=0;
 	const CONN_STATE_ERROR=1;
+	const CONN_STATE_CONNECTING=2;
+	const CONN_STATE_OFFLINE=3;
 
 	$tcp_in_buf = "";
 	$tcp_out_buf = "";
@@ -163,6 +168,7 @@
 	}
 
 	send_dbg("hallo");
+	send_msg(MSG_PING);
 
 	while(1)
 	{
@@ -198,7 +204,7 @@
 			dbg_log("recv isset");
 			$res = socket_recv($srv_sock, $buf, 2048, 0);
 
-			if ($res > 0)
+			if ($res && $res > 0)
 			{
 				// add bytes to tcp buffer
 				buf_put_data($tcp_in_buf, $buf);
@@ -207,7 +213,7 @@
 			}
 			else
 			{
-				dbg_log("recv returned ".$res);
+				dbg_log("recv returned '".$res."' ".socket_str_error(socket_last_error()));
 				break;
 			}
 		}
