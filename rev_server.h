@@ -9,7 +9,7 @@ enum
 {
 	TCP_BUF_SIZE=4096,
 	MAX_HTTP_IDLERS=4,
-	MAX_TCP_CONNECTIONS=64,
+	MAX_NETWORK_HANDLES=64,
 };
 
 struct rev_client
@@ -37,6 +37,23 @@ struct http_idler
 	char http_host[128];
 	char http_uri[256];
 	struct sockaddr_in addr;
+};
+
+enum
+{
+	/* network handle states */
+	NETW_HNDL_OFFLINE=0,
+	NETW_HNDL_TCP_INIT_CONNECT,
+	NETW_HNDL_TCP_CONNECT,
+	NETW_HNDL_TCP_ONLINE,
+};
+
+struct network_handle
+{
+	int state;
+	int id;
+
+	struct netaddr dst_addr;
 };
 
 struct rev_server
@@ -73,16 +90,20 @@ struct rev_server
 	time_t new_idler_date;
 	int last_idler_lifetime;
 
-	int tcp_conn_pool[MAX_TCP_CONNECTIONS];
+	struct network_handle netw_hndls[MAX_NETWORK_HANDLES];
 };
 
 void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 					int bind_port, const char *http_url);
 void revsrv_run(struct rev_server *revsrv);
 struct rev_client *revsrv_usable_cl(struct rev_server *revsrv);
+struct network_handle *revsrv_netw_hndl(struct rev_server *revsrv, int id);
 
-/* tcp connection id pool */
-int revsrv_new_conn_id(struct rev_server *revsrv);
-void revsrv_free_conn_id(struct rev_server *revsrv, int id);
+/* network handle pool */
+int revsrv_new_netw_hndl(struct rev_server *revsrv);
+void revsrv_free_netw_hndl(struct rev_server *revsrv, int id);
+
+/* initiate a tcp connection (returns: connection handle id) */
+int rev_init_conn(struct rev_server *revsrv, struct netaddr *addr);
 
 #endif

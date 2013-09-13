@@ -77,7 +77,12 @@ handle_msg(struct rev_server *revsrv, struct rev_client *cl, struct netmsg *msg)
 		printf("got pong\n");
 	else if(msg->id == MSG_CONN_STATE)
 	{
-	
+		const char *p = msg->data;
+		int id = *((uint16_t*)p);
+		int state = *(p+2);
+		const char *err_str = p+3;
+
+		printf("got conn state id %d state %d str '%s'\n", id, state, err_str);
 	}
 	else
 		return -1;
@@ -113,45 +118,4 @@ empty_msg(int id)
 	empty_msg_obj.size = 0;
 	empty_msg_obj.data = NULL;
 	return &empty_msg_obj;
-}
-
-int
-rev_init_conn(struct rev_server *revsrv, int addr_type, const char *addr_data, int port)
-{
-	struct rev_client *cl;
-	char buf[256];
-	struct netmsg msg;
-	int conn_id;
-
-	cl = revsrv_usable_cl(revsrv);
-
-	if (!cl)
-		return -1;
-
-	conn_id = revsrv_new_conn_id(revsrv);
-
-	if (conn_id == -1)
-		return -1;
-
-	msg.id = MSG_CONNECT;
-	msg.data = buf;
-
-	if (addr_type == ADDR_IPV4)
-	{
-		msg.size = 9;
-
-		*((uint16_t*)buf) = conn_id;
-		*((uint16_t*)(buf+2)) = ADDR_IPV4;
-		*((uint32_t*)(buf+3)) = *((uint32_t*)addr_data);
-		*((uint16_t*)(buf+7)) = port;
-	}
-	//else if() //TODO: implement mooaarr
-	else
-	{
-		ASSERT(0, "invalid addr type")
-		return -1;
-	}
-
-	rev_send_msg(revsrv, cl, &msg);
-	return 0;
 }

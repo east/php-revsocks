@@ -234,6 +234,7 @@
 					$msg = "";
 					buf_put_int16($msg, $s_id);
 					buf_put_int8($msg, CONN_STATE_ONLINE);
+					buf_put_str($msg, "");
 					send_msg(MSG_CONN_STATE, $msg);
 				}
 				else

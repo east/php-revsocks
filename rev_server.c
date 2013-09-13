@@ -59,8 +59,11 @@ void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 
 	/* reset tcp connection id pool */
 	int i;
-	for (i = 0; i < MAX_TCP_CONNECTIONS; i++)
-		revsrv->tcp_conn_pool[i] = CONN_STATE_OFFLINE;
+	for (i = 0; i < MAX_NETWORK_HANDLES; i++)
+	{
+		revsrv->netw_hndls[i].id = i;
+		revsrv->netw_hndls[i].state = NETW_HNDL_OFFLINE;
+	}
 }
 
 static int
@@ -318,6 +321,7 @@ revsrv_run(struct rev_server *revsrv)
 	/* bind listening socket */
 	//TODO: do this socket family independent
 	struct sockaddr_in addr;
+	int i;
 
 	memset(&addr, 0, sizeof(struct sockaddr_in));
 	addr.sin_addr.s_addr = inet_addr(revsrv->bind_ip);
@@ -349,7 +353,6 @@ revsrv_run(struct rev_server *revsrv)
 		http_idlers_add_fds(revsrv);
 		add_read_fd(revsrv, revsrv->rev_listen_sock);
 
-		int i;
 		for (i = 1; i >= 0; i--)
 		{
 			if (revsrv->clients[i].sock == -1)
@@ -418,9 +421,9 @@ revsrv_run(struct rev_server *revsrv)
 
 				printf("rev client accepted\n");
 
-				const char lo_ip[] = {127, 0, 0, 1};
-				int id = rev_init_conn(revsrv, ADDR_IPV4, lo_ip, 8080);
-				printf("NEW conn id %d\n", id);
+				//const char lo_ip[] = {127, 0, 0, 1};
+				//int id = rev_init_conn(revsrv, ADDR_IPV4, lo_ip, 8080);
+				//printf("NEW conn id %d\n", id);
 			}
 		}
 
@@ -429,7 +432,104 @@ revsrv_run(struct rev_server *revsrv)
 			handle_rev_client(revsrv, &revsrv->clients[0]);
 		if (revsrv->clients[1].sock != -1)
 			handle_rev_client(revsrv, &revsrv->clients[1]);
+
+		/* handle network handles */
+		for (i = 0; i < MAX_NETWORK_HANDLES; i++)
+		{
+			struct network_handle *hndl = &revsrv->netw_hndls[i];
+			if (hndl->state == NETW_HNDL_OFFLINE)
+				continue;
+
+			if (hndl->state == NETW_HNDL_TCP_INIT_CONNECT)
+			{
+				struct rev_client *cl = revsrv_usable_cl(revsrv);
+
+				if (!cl)
+				{
+					printf("Can't init connection (no cl online)\n");
+					continue;
+				}
+
+				/* send tcp initiation */
+				struct netmsg msg;
+				char buf[256];
+
+				msg.id = MSG_CONNECT;
+				msg.data = buf;
+
+				if (hndl->dst_addr.type == ADDR_IPV4)
+				{
+					msg.size = 9;
+					
+					*((uint16_t*)buf) = i;
+					*((uint16_t*)(buf+2)) = ADDR_IPV4;
+					*((uint32_t*)(buf+3)) = *((uint32_t*)hndl->dst_addr.addr_data);
+					*((uint16_t*)(buf+7)) = hndl->dst_addr.port;					
+				}
+				else //TODO: implement all addr types
+				{ ASSERT(0, "can't handle non ipv4") }
+
+				rev_send_msg(revsrv, cl, &msg);
+				hndl->state = NETW_HNDL_TCP_CONNECT;
+			}
+		}
 	}
+}
+
+struct rev_client*
+revsrv_usable_cl(struct rev_server *revsrv)
+{
+	if (!revsrv->usable_cl)
+		printf("Warning: no usable cl selected\n");
+	return revsrv->usable_cl;
+}
+
+int revsrv_new_netw_hndl(struct rev_server *revsrv)
+{
+	int i;
+	for (i = 0; i < MAX_NETWORK_HANDLES; i++) {
+		if (revsrv->netw_hndls[i].state == NETW_HNDL_OFFLINE)
+			break;
+	}
+
+	if (i == MAX_NETWORK_HANDLES)
+	{
+		printf("Warning: network handle pool full");
+		return -1;
+	}
+
+	return i;
+}
+
+void revsrv_free_netw_hndl(struct rev_server *revsrv, int id)
+{
+	ASSERT(id >= 0 && id <= MAX_NETWORK_HANDLES, "invalid network handle id")
+	revsrv->netw_hndls[id].state = NETW_HNDL_OFFLINE;
+}
+
+struct network_handle*
+revsrv_netw_hndl(struct rev_server *revsrv, int id)
+{
+	ASSERT(id >= 0 && id <= MAX_NETWORK_HANDLES, "invalid network handle")
+	return &revsrv->netw_hndls[id];
+}
+
+int
+revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr)
+{
+	int netw_hndl;
+
+	netw_hndl = revsrv_new_netw_hndl(revsrv);
+
+	if (netw_hndl == -1)
+		return -1;
+
+	struct network_handle *hndl = revsrv_netw_hndl(revsrv, netw_hndl);
+
+	hndl->state = NETW_HNDL_TCP_INIT_CONNECT;
+	memcpy(&hndl->dst_addr, addr, sizeof(hndl->dst_addr));
+
+	return 0;
 }
 
 int
@@ -443,40 +543,14 @@ main(int argc, char **argv)
 
 	revsrv_init(&revsrv, BIND_IP, BIND_PORT, PHP_URL);
 
+	//TESTING
+	struct netaddr addr;
+	netaddr_init_ipv4(&addr, "127.0.0.1", 23);
+	revsrv_init_conn(&revsrv, &addr);
+
 	/* give control to rev server */
 	revsrv_run(&revsrv);
 
 	return EXIT_SUCCESS;	
-}
-
-struct rev_client*
-revsrv_usable_cl(struct rev_server *revsrv)
-{
-	if (!revsrv->usable_cl)
-		printf("Warning: no usable cl selected\n");
-	return revsrv->usable_cl;
-}
-
-int revsrv_new_conn_id(struct rev_server *revsrv)
-{
-	int i;
-	for (i = 0; i < MAX_TCP_CONNECTIONS; i++) {
-		if (revsrv->tcp_conn_pool[i] == CONN_STATE_OFFLINE)
-			break;
-	}
-
-	if (i == MAX_TCP_CONNECTIONS)
-	{
-		printf("Warning: tcp connection id pool full");
-		return -1;
-	}
-
-	return i;
-}
-
-void revsrv_free_conn_id(struct rev_server *revsrv, int id)
-{
-	ASSERT(id >= 0 && id <= MAX_TCP_CONNECTIONS, "invalid tcp conn id")
-	revsrv->tcp_conn_pool[id] = CONN_STATE_OFFLINE;
 }
 

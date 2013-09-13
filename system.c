@@ -44,3 +44,10 @@ socket_set_linger(int sock)
    setsockopt(sock, SOL_SOCKET, SO_LINGER,
 			   &li, sizeof(struct linger));
 }
+
+void netaddr_init_ipv4(struct netaddr *addr, const char *ip, int port)
+{
+	addr->type = ADDR_IPV4;
+	*((uint32_t*)addr->addr_data) = inet_addr(ip);
+	addr->port = port;
+}

@@ -17,11 +17,6 @@ enum
 	/* tcp connection state	*/
 	MSG_CONN_STATE, /* <uint16 id>, <uint8 state>, <str error string> */
 
-	/* address types */
-	ADDR_IPV4=0, /* <uint32> */
-	ADDR_IPV6, /* <uint128> */
-	ADDR_DOMAIN, /* <str> */
-
 	/* connection states */
 	CONN_STATE_ONLINE=0,
 	CONN_STATE_ERROR,
