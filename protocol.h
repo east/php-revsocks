@@ -19,7 +19,7 @@ enum
 
 	/* connection states */
 	CONN_STATE_ONLINE=0,
-	CONN_STATE_ERROR,
+	CONN_STATE_ERROR, /* connection lost / failed to connect */
 	CONN_STATE_CONNECTING,
 	CONN_STATE_OFFLINE,
 };

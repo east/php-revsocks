@@ -253,6 +253,30 @@ reset_fds(struct rev_server *revsrv)
 }
 
 static void
+on_netw_hndl_disc(struct rev_server *revsrv, int id)
+{
+	printf("netw handle %d disc\n", id);
+}
+
+static void
+on_rev_disc(struct rev_server *revsrv, struct rev_client *cl)
+{
+	/* care of network handles opened by this client */
+	int i;
+	for (i = 0; i < MAX_NETWORK_HANDLES; i++)
+	{
+		struct network_handle *hndl = &revsrv->netw_hndls[i];
+
+		if (hndl->cl == cl)
+		{
+			hndl->state = NETW_HNDL_OFFLINE;
+			on_netw_hndl_disc(revsrv, hndl);
+		}
+	}
+
+}
+
+static void
 handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 {
 	int disc_client = 0;
@@ -272,6 +296,7 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 
 			close(cl->sock);
 			cl->sock = -1;
+			on_rev_disc(revsrv, cl);
 		}
 		else
 		{
@@ -442,9 +467,9 @@ revsrv_run(struct rev_server *revsrv)
 
 			if (hndl->state == NETW_HNDL_TCP_INIT_CONNECT)
 			{
-				struct rev_client *cl = revsrv_usable_cl(revsrv);
+				hndl->cl = revsrv_usable_cl(revsrv);
 
-				if (!cl)
+				if (!hndl->cl)
 				{
 					printf("Can't init connection (no cl online)\n");
 					continue;
@@ -469,8 +494,14 @@ revsrv_run(struct rev_server *revsrv)
 				else //TODO: implement all addr types
 				{ ASSERT(0, "can't handle non ipv4") }
 
-				rev_send_msg(revsrv, cl, &msg);
+				rev_send_msg(revsrv, hndl->cl, &msg);
 				hndl->state = NETW_HNDL_TCP_CONNECT;
+			}
+			else if(hndl->state == NETW_HNDL_TCP_FAIL ||
+				hndl->state == NETW_HNDL_TCP_DISC)
+			{
+				hndl->state = NETW_HNDL_OFFLINE;
+				on_netw_hndl_disc(revsrv, i);
 			}
 		}
 	}
@@ -527,6 +558,7 @@ revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr)
 	struct network_handle *hndl = revsrv_netw_hndl(revsrv, netw_hndl);
 
 	hndl->state = NETW_HNDL_TCP_INIT_CONNECT;
+	hndl->cl = NULL;
 	memcpy(&hndl->dst_addr, addr, sizeof(hndl->dst_addr));
 
 	return 0;
@@ -545,7 +577,7 @@ main(int argc, char **argv)
 
 	//TESTING
 	struct netaddr addr;
-	netaddr_init_ipv4(&addr, "127.0.0.1", 23);
+	netaddr_init_ipv4(&addr, "127.0.0.1", 3333);
 	revsrv_init_conn(&revsrv, &addr);
 
 	/* give control to rev server */

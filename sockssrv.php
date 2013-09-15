@@ -110,8 +110,6 @@
 		buf_put_int8($tcp_out_buf, $id);
 		// data
 		buf_put_data($tcp_out_buf, $data);
-
-		dbg_log("send msg ".$id);
 	}
 
 	function send_dbg($dbgmsg)
@@ -187,6 +185,8 @@
 				$wsocks[] = $s['sock'];
 				dbg_log("session ".$s_id." connects to ".$s['addr_data']);
 			}
+			else if($s['state'] == SESSION_ONLINE)
+				$rsocks[] = $s['sock'];
 		}
 
 		if (!socket_select($rsocks, $wsocks, $null, $null))
@@ -251,6 +251,36 @@
 
 					// unset session in array
 					unset($s);
+				}
+			}
+			else if ($s['state'] == SESSION_ONLINE &&
+				in_array($s['sock'], $rsocks))
+			{
+				$buf;
+				$res = socket_recv($s['sock'], $buf, 2048, 0);
+
+				if ($res == false || $res <= 0)
+				{
+					// disconnect?
+					dbg_log("session ".$s_id." disc");
+
+					$s['state'] = SESSION_FAILED;
+					socket_close($s['sock']);
+
+					// inform rev
+					$msg = "";
+					buf_put_int16($msg, $s_id);
+					buf_put_int8($msg, CONN_STATE_ERROR);
+					buf_put_str($msg, socket_strerror(socket_last_error()));
+					send_msg(MSG_CONN_STATE, $msg);
+
+					// unset session in array
+					unset($s);
+				}
+				else
+				{
+					dbg_log("session ".$s_id." got ".$res." bytes");
+					//TODO: transmit data to rev server
 				}
 			}
 		}

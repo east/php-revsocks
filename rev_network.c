@@ -82,7 +82,30 @@ handle_msg(struct rev_server *revsrv, struct rev_client *cl, struct netmsg *msg)
 		int state = *(p+2);
 		const char *err_str = p+3;
 
-		printf("got conn state id %d state %d str '%s'\n", id, state, err_str);
+		struct network_handle *hndl = revsrv_netw_hndl(revsrv, id);
+
+		if (hndl->state == NETW_HNDL_TCP_CONNECT)
+		{
+			if (state == CONN_STATE_ERROR)
+			{
+				/* failed to connect */
+				printf("netw handle %d failed to connect '%s'\n", id, err_str);
+				hndl->state = NETW_HNDL_TCP_FAIL;
+			}
+			else if(state == CONN_STATE_ONLINE)
+			{
+				/* connection established */
+				printf("netw handle %d established connection\n", id);
+				hndl->state = NETW_HNDL_TCP_ONLINE;
+			}
+			else { ASSERT(0, "invalid state") }
+		}
+		else if(hndl->state == NETW_HNDL_TCP_ONLINE &&
+					state == CONN_STATE_ERROR)
+		{
+			hndl->state = NETW_HNDL_TCP_DISC;
+		}
+		else { ASSERT(0, "invalid state") }
 	}
 	else
 		return -1;

@@ -46,12 +46,15 @@ enum
 	NETW_HNDL_TCP_INIT_CONNECT,
 	NETW_HNDL_TCP_CONNECT,
 	NETW_HNDL_TCP_ONLINE,
+	NETW_HNDL_TCP_DISC,
+	NETW_HNDL_TCP_FAIL,
 };
 
 struct network_handle
 {
 	int state;
 	int id;
+	struct rev_client *cl;
 
 	struct netaddr dst_addr;
 };
