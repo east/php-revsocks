@@ -20,8 +20,8 @@ init_client(struct rev_client *cl)
 {
 	cl->sock = -1;
 
-	fifo_init(&cl->rev_in_buf, malloc(TCP_BUF_SIZE), TCP_BUF_SIZE);
-	fifo_init(&cl->rev_out_buf, malloc(TCP_BUF_SIZE), TCP_BUF_SIZE);
+	fifo_init(&cl->rev_in_buf, cl->in_buf, sizeof(cl->in_buf));
+	fifo_init(&cl->rev_out_buf, cl->out_buf, sizeof(cl->out_buf));
 }
 
 static void
@@ -232,11 +232,11 @@ handle_http_idlers(struct rev_server *revsrv)
 		}
 	}
 
-	if ((revsrv->new_idler_date != -1 && revsrv->new_idler_date <= now) ||
+	if (/*(revsrv->new_idler_date != -1 && revsrv->new_idler_date <= now) ||*/
 			idlers_online == 0)
 	{
 		init_http_idler(revsrv);
-		revsrv->new_idler_date = /*-1*/ now+10;
+		//revsrv->new_idler_date = /*-1*/ now+10;
 
 	//	if (revsrv->last_idler_lifetime > 0)
 	//		revsrv->new_idler_date = now+revsrv->last_idler_lifetime/2;
@@ -270,7 +270,7 @@ on_rev_disc(struct rev_server *revsrv, struct rev_client *cl)
 		if (hndl->cl == cl)
 		{
 			hndl->state = NETW_HNDL_OFFLINE;
-			on_netw_hndl_disc(revsrv, hndl);
+			on_netw_hndl_disc(revsrv, i);
 		}
 	}
 
@@ -497,11 +497,22 @@ revsrv_run(struct rev_server *revsrv)
 				rev_send_msg(revsrv, hndl->cl, &msg);
 				hndl->state = NETW_HNDL_TCP_CONNECT;
 			}
-			else if(hndl->state == NETW_HNDL_TCP_FAIL ||
+			else if (hndl->state == NETW_HNDL_TCP_FAIL ||
 				hndl->state == NETW_HNDL_TCP_DISC)
 			{
 				hndl->state = NETW_HNDL_OFFLINE;
 				on_netw_hndl_disc(revsrv, i);
+			}
+			else if (hndl->state == NETW_HNDL_TCP_ONLINE)
+			{
+				int len = fifo_len(&hndl->tcp_out_buf);
+
+				if (len > 0)
+				{
+					rev_netmsg_send(revsrv, hndl->cl, i, hndl->tcp_out_buf.data, fifo_len(&hndl->tcp_out_buf));
+					
+					fifo_read(&hndl->tcp_out_buf, NULL, fifo_len(&hndl->tcp_out_buf));
+				}
 			}
 		}
 	}
@@ -528,6 +539,11 @@ int revsrv_new_netw_hndl(struct rev_server *revsrv)
 		printf("Warning: network handle pool full");
 		return -1;
 	}
+
+	/* reset buffers */
+	struct network_handle *hndl = &revsrv->netw_hndls[i];
+	fifo_init(&hndl->tcp_in_buf, hndl->in_buf, sizeof(hndl->in_buf));
+	fifo_init(&hndl->tcp_out_buf, hndl->out_buf, sizeof(hndl->out_buf));
 
 	return i;
 }
@@ -577,8 +593,9 @@ main(int argc, char **argv)
 
 	//TESTING
 	struct netaddr addr;
-	netaddr_init_ipv4(&addr, "127.0.0.1", 3333);
-	revsrv_init_conn(&revsrv, &addr);
+	netaddr_init_ipv4(&addr, "127.0.0.1", 2222);
+	int netwhndl = revsrv_init_conn(&revsrv, &addr);
+	revsrv_send(&revsrv, netwhndl, "hallo\n", 6);
 
 	/* give control to rev server */
 	revsrv_run(&revsrv);
@@ -586,3 +603,12 @@ main(int argc, char **argv)
 	return EXIT_SUCCESS;	
 }
 
+int revsrv_send(struct rev_server *revsrv, int netw_hndl, const char *data, int size)
+{
+	struct network_handle *hndl =
+			revsrv_netw_hndl(revsrv, netw_hndl);
+	
+	int res = fifo_write(&hndl->tcp_out_buf, data, size);
+	ASSERT(res == 0, "session out buf overflow")
+	return (res==0) ? 0 : -1;
+}

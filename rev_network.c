@@ -107,6 +107,27 @@ handle_msg(struct rev_server *revsrv, struct rev_client *cl, struct netmsg *msg)
 		}
 		else { ASSERT(0, "invalid state") }
 	}
+	else if (msg->id == MSG_SEND)
+	{
+		const char *p = msg->data;
+		int session_id = *((uint16_t*)p);
+		int size = *((uint16_t*)(p+2));
+		const char *data = p+4;
+
+		ASSERT(msg->size == size+4, "invalid size")
+
+		printf("data from session %d size %d\n", session_id, size);
+
+
+		struct network_handle *hndl =
+				 revsrv_netw_hndl(revsrv, session_id);
+
+		if (hndl)
+		{
+			int res = fifo_write(&hndl->tcp_in_buf, data, size);
+			ASSERT(res == 0, "session in buf overflow")
+		}
+	}
 	else
 		return -1;
 	
@@ -141,4 +162,21 @@ empty_msg(int id)
 	empty_msg_obj.size = 0;
 	empty_msg_obj.data = NULL;
 	return &empty_msg_obj;
+}
+
+void rev_netmsg_send(struct rev_server *revsrv, struct rev_client *cl,
+					int netw_hndl, const char *data, int size)
+{
+	struct netmsg msg;
+	char buf[TCP_BUF_SIZE];
+
+	msg.id = MSG_SEND;
+	msg.size = 4 + size;
+	msg.data = buf;
+
+	*((uint16_t*)buf) = netw_hndl;
+	*((uint16_t*)(buf+2)) = size;
+	memcpy(buf+4, data, size);
+
+	rev_send_msg(revsrv, cl, &msg);
 }

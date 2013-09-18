@@ -71,6 +71,10 @@
 									"in_buf" => "",
 									"out_buf" => "");
 		}
+		else if ($msg_id == MSG_SEND)
+		{
+			// TODO: handle session data
+		}
 		else
 			buf_skip($tcp_in_buf, $msg_size);
 		
@@ -119,12 +123,20 @@
 		send_msg(MSG_DBGMSG, $data);
 	}
 
+	function buf_space_left(&$buf)
+	{
+		return BUF_SIZE - buf_len($buf);
+	}
+
+	const BUF_SIZE=4096;
+	
 	// msg ids
 	const MSG_DBGMSG=0;
 	const MSG_PING=1;
 	const MSG_PONG=2;
 	const MSG_CONNECT=3;
 	const MSG_CONN_STATE=4;
+	const MSG_SEND=5;
 
 	// address types
 	const ADDR_IPV4=0;
@@ -185,7 +197,8 @@
 				$wsocks[] = $s['sock'];
 				dbg_log("session ".$s_id." connects to ".$s['addr_data']);
 			}
-			else if($s['state'] == SESSION_ONLINE)
+			else if($s['state'] == SESSION_ONLINE &&
+					buf_space_left($s['in_buf']) > 0)
 				$rsocks[] = $s['sock'];
 		}
 
@@ -253,35 +266,52 @@
 					unset($s);
 				}
 			}
-			else if ($s['state'] == SESSION_ONLINE &&
-				in_array($s['sock'], $rsocks))
+			else if ($s['state'] == SESSION_ONLINE)
 			{
-				$buf;
-				$res = socket_recv($s['sock'], $buf, 2048, 0);
-
-				if ($res == false || $res <= 0)
+				if (in_array($s['sock'], $rsocks))
 				{
-					// disconnect?
-					dbg_log("session ".$s_id." disc");
+					$buf;
 
-					$s['state'] = SESSION_FAILED;
-					socket_close($s['sock']);
+					$space_left = buf_space_left($s['in_buf']);
+					$res = socket_recv($s['sock'], $buf, $space_left, 0);
 
-					// inform rev
+					if ($res == false || $res <= 0)
+					{
+						// disconnect?
+						dbg_log("session ".$s_id." disc");
+
+						$s['state'] = SESSION_FAILED;
+						socket_close($s['sock']);
+
+						// inform rev
+						$msg = "";
+						buf_put_int16($msg, $s_id);
+						buf_put_int8($msg, CONN_STATE_ERROR);
+						buf_put_str($msg, socket_strerror(socket_last_error()));
+						send_msg(MSG_CONN_STATE, $msg);
+
+						// unset session in array
+						unset($s);
+					}
+					else
+					{
+						dbg_log("session ".$s_id." got ".$res." bytes");				
+						buf_put_data($s['in_buf'], $buf);
+					}
+				}
+
+				// send avaiable data to rev server
+				$len = buf_len($s['in_buf']);
+				if ($len > 0)
+				{
 					$msg = "";
 					buf_put_int16($msg, $s_id);
-					buf_put_int8($msg, CONN_STATE_ERROR);
-					buf_put_str($msg, socket_strerror(socket_last_error()));
-					send_msg(MSG_CONN_STATE, $msg);
+					buf_put_int16($msg, $len);
+					buf_put_data($msg, $s['in_buf']);
+					send_msg(MSG_SEND, $msg);
+					buf_skip($s['in_buf'], $len);
+				}
 
-					// unset session in array
-					unset($s);
-				}
-				else
-				{
-					dbg_log("session ".$s_id." got ".$res." bytes");
-					//TODO: transmit data to rev server
-				}
 			}
 		}
 	}

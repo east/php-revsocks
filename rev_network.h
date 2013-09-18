@@ -20,5 +20,6 @@ struct netmsg
 
 int rev_pump_network(struct rev_server *revsrv, struct rev_client *cl);
 int rev_send_msg(struct rev_server *revsrv, struct rev_client *cl, struct netmsg *msg);
+void rev_netmsg_send(struct rev_server *revsrv, struct rev_client *cl, int netw_hndl, const char *data, int size);
 
 #endif

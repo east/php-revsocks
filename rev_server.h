@@ -19,6 +19,8 @@ struct rev_client
 	/* tcp buffers */
 	struct FIFOBUF rev_in_buf;
 	struct FIFOBUF rev_out_buf;
+	char in_buf[TCP_BUF_SIZE];
+	char out_buf[TCP_BUF_SIZE];
 };
 
 enum
@@ -57,6 +59,12 @@ struct network_handle
 	struct rev_client *cl;
 
 	struct netaddr dst_addr;
+
+	/* tcp buffers */
+	struct FIFOBUF tcp_in_buf;
+	struct FIFOBUF tcp_out_buf;
+	char in_buf[TCP_BUF_SIZE];
+	char out_buf[TCP_BUF_SIZE];
 };
 
 struct rev_server
@@ -107,6 +115,8 @@ int revsrv_new_netw_hndl(struct rev_server *revsrv);
 void revsrv_free_netw_hndl(struct rev_server *revsrv, int id);
 
 /* initiate a tcp connection (returns: connection handle id) */
-int rev_init_conn(struct rev_server *revsrv, struct netaddr *addr);
+int revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr);
+
+int revsrv_send(struct rev_server *revsrv, int netw_handle, const char *data, int size);
 
 #endif

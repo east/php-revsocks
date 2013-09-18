@@ -16,6 +16,7 @@ enum
 	MSG_CONNECT,
 	/* tcp connection state	*/
 	MSG_CONN_STATE, /* <uint16 id>, <uint8 state>, <str error string> */
+	MSG_SEND, /* <uint16 id>, <uint16 size>, <data> */
 
 	/* connection states */
 	CONN_STATE_ONLINE=0,
