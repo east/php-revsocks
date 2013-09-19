@@ -1,4 +1,5 @@
 <?php
+	function buf_len(&$buf) { return mb_strlen($buf); }
 	function buf_put_data(&$buf, $data) { $buf .= $data; }
 	function buf_put_str(&$buf, $str)
 	{
@@ -36,6 +37,12 @@
 		$buf = substr($buf, $len+1);
 
 		return $str;
+	}
+	function buf_get_data(&$buf, $size)
+	{
+		$data = substr($buf, 0, $size);
+		buf_skip($buf, $size);
+		return $data;
 	}
 	function buf_skip(&$buf, $len) { $buf = substr($buf, $len); }
 	function buf_get_uint8(&$buf, $do_skip=true)

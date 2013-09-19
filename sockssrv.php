@@ -73,7 +73,17 @@
 		}
 		else if ($msg_id == MSG_SEND)
 		{
-			// TODO: handle session data
+			$s_id = buf_get_uint16($tcp_in_buf);
+			$size = buf_get_uint16($tcp_in_buf);
+			$data = buf_get_data($tcp_in_buf, $size);
+		
+			if ($size > buf_space_left($sessions[$s_id]['out_buf']))
+			{
+				dbg_log("session out buffer overflow");
+				exit();
+			}
+
+			buf_put_data($sessions[$s_id]['out_buf'], $data);
 		}
 		else
 			buf_skip($tcp_in_buf, $msg_size);
@@ -202,10 +212,10 @@
 				$rsocks[] = $s['sock'];
 		}
 
-		if (!socket_select($rsocks, $wsocks, $null, $null))
+		if (!socket_select($rsocks, $wsocks, $null, 1))
 		{
-			dbg_log("select error");
-			break;
+			//dbg_log("select error");
+			//break;
 		}
 
 		if (!send_data())
@@ -312,6 +322,15 @@
 					buf_skip($s['in_buf'], $len);
 				}
 
+				// send avaiable data to our destination host
+				$len = buf_len($s['out_buf']);
+				if ($len > 0)
+				{
+					$res = socket_send($s['sock'], $s['out_buf'], $len, 0);
+
+					if ($res > 0)
+						buf_skip($s['out_buf'], $res);
+				}
 			}
 		}
 	}

@@ -131,7 +131,7 @@ init_http_idler(struct rev_server *revsrv)
 	}
 
 	http_cl->state = HTTP_IDLER_CONNECTING;
-	printf("connecting to '%s'\n", http_cl->http_host);
+	printf("http idler connecting to '%s'\n", http_cl->http_host);
 
 	return i;
 }
@@ -188,7 +188,6 @@ handle_http_idlers(struct rev_server *revsrv)
 
 			if (res == 0)
 			{
-				printf("connection of %d established\n", i);
 
 				/* send request */
 				char buf[1024];
@@ -232,11 +231,11 @@ handle_http_idlers(struct rev_server *revsrv)
 		}
 	}
 
-	if (/*(revsrv->new_idler_date != -1 && revsrv->new_idler_date <= now) ||*/
-			idlers_online == 0)
+	if (/*(revsrv->new_idler_date != -1 && revsrv->new_idler_date <= now) ||
+			idlers_online == 0*/revsrv->new_idler_date == 0)
 	{
 		init_http_idler(revsrv);
-		//revsrv->new_idler_date = /*-1*/ now+10;
+		revsrv->new_idler_date = now;
 
 	//	if (revsrv->last_idler_lifetime > 0)
 	//		revsrv->new_idler_date = now+revsrv->last_idler_lifetime/2;
@@ -581,6 +580,17 @@ revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr)
 }
 
 int
+revsrv_send(struct rev_server *revsrv, int netw_hndl, const char *data, int size)
+{
+	struct network_handle *hndl =
+			revsrv_netw_hndl(revsrv, netw_hndl);
+	
+	int res = fifo_write(&hndl->tcp_out_buf, data, size);
+	ASSERT(res == 0, "session out buf overflow")
+	return (res==0) ? 0 : -1;
+}
+
+int
 main(int argc, char **argv)
 {
 	struct rev_server revsrv;
@@ -603,12 +613,3 @@ main(int argc, char **argv)
 	return EXIT_SUCCESS;	
 }
 
-int revsrv_send(struct rev_server *revsrv, int netw_hndl, const char *data, int size)
-{
-	struct network_handle *hndl =
-			revsrv_netw_hndl(revsrv, netw_hndl);
-	
-	int res = fifo_write(&hndl->tcp_out_buf, data, size);
-	ASSERT(res == 0, "session out buf overflow")
-	return (res==0) ? 0 : -1;
-}
