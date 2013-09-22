@@ -39,6 +39,8 @@ reset_http_idlers(struct rev_server *revsrv)
 void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 					int bind_port, const char *http_url)
 {
+	int i;
+
 	reset_http_idlers(revsrv);
 
 	revsrv->rev_listen_sock = create_tcp_socket();
@@ -58,12 +60,36 @@ void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 	revsrv->last_idler_lifetime = -1;
 
 	/* reset tcp connection id pool */
-	int i;
 	for (i = 0; i < MAX_NETWORK_HANDLES; i++)
 	{
 		revsrv->netw_hndls[i].id = i;
 		revsrv->netw_hndls[i].state = NETW_HNDL_OFFLINE;
 	}
+	
+	/* bind listening socket */
+	//TODO: do this socket family independent
+	struct sockaddr_in addr;
+
+	memset(&addr, 0, sizeof(struct sockaddr_in));
+	addr.sin_addr.s_addr = inet_addr(revsrv->bind_ip);
+	addr.sin_port = htons(revsrv->bind_port);
+	addr.sin_family = AF_INET;
+	
+	if (bind(revsrv->rev_listen_sock,
+		(struct sockaddr*)&addr, sizeof(addr)) != 0)
+	{
+		printf("bind() : %s\n", strerror(errno));
+		return;
+	}
+
+	/* listening mode */
+	if (listen(revsrv->rev_listen_sock, 2) != 0)
+	{
+		printf("listen() : %s\n", strerror(errno));
+		return;
+	}
+
+	printf("listening on %s:%d\n", revsrv->bind_ip, revsrv->bind_port);
 }
 
 static int
@@ -136,34 +162,33 @@ init_http_idler(struct rev_server *revsrv)
 	return i;
 }
 
-static void
-add_read_fd(struct rev_server *revsrv, int fd)
+static int
+http_idlers_add_fds(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
 {
-	FD_SET(fd, &revsrv->read_fds);
-	if (fd > revsrv->high_desc)
-		revsrv->high_desc = fd;
-}
+	#define UPDATE_HFD(sock) \
+		if (sock > highest_fd) { highest_fd = sock; }
 
-static void
-add_write_fd(struct rev_server *revsrv, int fd)
-{
-	FD_SET(fd, &revsrv->write_fds);
-	if (fd > revsrv->high_desc)
-		revsrv->high_desc = fd;
-}
-
-static void
-http_idlers_add_fds(struct rev_server *revsrv)
-{
-	int i;
+	int i, highest_fd = -1;
 	/* add polling descriptors */
 	for (i = 0; i < MAX_HTTP_IDLERS; i++)
 	{
 		if (revsrv->http_idlers[i].state == HTTP_IDLER_CONNECTING)
-			add_write_fd(revsrv, revsrv->http_idlers[i].sock); /* wait for connection */
+		{
+			/* wait for connection */
+			FD_SET(revsrv->http_idlers[i].sock, wfds);
+			UPDATE_HFD(revsrv->http_idlers[i].sock)
+		}
 		else if (revsrv->http_idlers[i].state == HTTP_IDLER_ONLINE)
-			add_read_fd(revsrv, revsrv->http_idlers[i].sock); /* wait for data */
+		{
+			/* wait for data */
+			FD_SET(revsrv->http_idlers[i].sock, rfds);
+			UPDATE_HFD(revsrv->http_idlers[i].sock)
+		}
 	}
+
+	#undef UPDATE_HFD
+
+	return highest_fd;
 }
 
 static void
@@ -181,7 +206,7 @@ handle_http_idlers(struct rev_server *revsrv)
 			idlers_online++;
 		
 		if (cl->state == HTTP_IDLER_CONNECTING &&
-			FD_ISSET(cl->sock, &revsrv->write_fds))
+			FD_ISSET(cl->sock, revsrv->write_fds))
 		{
 			/* check connection state */
 			int res = connect(cl->sock, (struct sockaddr*)&cl->addr, sizeof(&cl->addr));
@@ -210,7 +235,7 @@ handle_http_idlers(struct rev_server *revsrv)
 				cl->state = HTTP_IDLER_OFFLINE;
 			}
 		}
-		else if(cl->state == HTTP_IDLER_ONLINE && FD_ISSET(cl->sock, &revsrv->read_fds))
+		else if(cl->state == HTTP_IDLER_ONLINE && FD_ISSET(cl->sock, revsrv->read_fds))
 		{
 			/* receive data */
 			char buf[2048];
@@ -243,15 +268,6 @@ handle_http_idlers(struct rev_server *revsrv)
 }
 
 static void
-reset_fds(struct rev_server *revsrv)
-{
-	/* reset read/write descriptors */
-	revsrv->high_desc = -1;
-	FD_ZERO(&revsrv->read_fds);
-	FD_ZERO(&revsrv->write_fds);
-}
-
-static void
 on_netw_hndl_disc(struct rev_server *revsrv, int id)
 {
 	printf("netw handle %d disc\n", id);
@@ -280,7 +296,7 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 {
 	int disc_client = 0;
 
-	if (FD_ISSET(cl->sock, &revsrv->read_fds))
+	if (FD_ISSET(cl->sock, revsrv->read_fds))
 	{
 		char buf[2048];
 		/* receive data */
@@ -339,179 +355,150 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 	}
 }
 
-void
-revsrv_run(struct rev_server *revsrv)
+int
+revsrv_get_fds(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
 {
-	/* bind listening socket */
-	//TODO: do this socket family independent
-	struct sockaddr_in addr;
+	#define UPDATE_HFD(sock) \
+		if (sock > highest_fd) { highest_fd = sock; }
+
+	int highest_fd = -1, res;
+
+	/* add socket descriptors to select */
+	res = http_idlers_add_fds(revsrv, rfds, wfds);
+	UPDATE_HFD(res)
+
+	FD_SET(revsrv->rev_listen_sock, rfds);
+	UPDATE_HFD(revsrv->rev_listen_sock)	
+
+	int i;
+	for (i = 1; i >= 0; i--)
+	{
+		if (revsrv->clients[i].sock == -1)
+			continue;
+			
+		FD_SET(revsrv->clients[i].sock, rfds);
+		UPDATE_HFD(revsrv->clients[i].sock)
+
+		if (fifo_len(&revsrv->clients[i].rev_out_buf) > 0)
+		{
+			FD_SET(revsrv->clients[i].sock, wfds);
+			UPDATE_HFD(revsrv->clients[i].sock)
+		}
+	}
+
+	#undef UPDATE_HFD
+	return highest_fd;
+}
+
+void
+revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
+{
 	int i;
 
-	memset(&addr, 0, sizeof(struct sockaddr_in));
-	addr.sin_addr.s_addr = inet_addr(revsrv->bind_ip);
-	addr.sin_port = htons(revsrv->bind_port);
-	addr.sin_family = AF_INET;
-	
-	if (bind(revsrv->rev_listen_sock,
-		(struct sockaddr*)&addr, sizeof(addr)) != 0)
-	{
-		printf("bind() : %s\n", strerror(errno));
-		return;
-	}
+	revsrv->read_fds = rfds;
+	revsrv->write_fds = wfds;
 
-	/* listening mode */
-	if (listen(revsrv->rev_listen_sock, 2) != 0)
-	{
-		printf("listen() : %s\n", strerror(errno));
-		return;
-	}
+	handle_http_idlers(revsrv);
 
-	printf("listening on %s:%d\n", revsrv->bind_ip, revsrv->bind_port);
-	
-	/* Mainloop */
-	while(1)
+	if (FD_ISSET(revsrv->rev_listen_sock,
+		revsrv->read_fds))
 	{
-		reset_fds(revsrv);
-	
-		/* add socket descriptors to select */
-		http_idlers_add_fds(revsrv);
-		add_read_fd(revsrv, revsrv->rev_listen_sock);
+		struct rev_client *cl = NULL;
+		int tmp_sock;
 
-		for (i = 1; i >= 0; i--)
+		if (revsrv->clients[1].sock == -1)
+			cl = &revsrv->clients[1];
+		if (revsrv->clients[0].sock == -1)
+			cl = &revsrv->clients[0];
+
+		tmp_sock = accept(revsrv->rev_listen_sock, NULL, NULL);
+		ASSERT(tmp_sock != -1, "accept() returned -1")
+
+		if (!cl)
 		{
-			if (revsrv->clients[i].sock == -1)
-				continue;
-			
-			add_read_fd(revsrv, revsrv->clients[i].sock);
-
-			/* if we need to send data select() should break when we are able to do it */
-			if (fifo_len(&revsrv->clients[i].rev_out_buf) > 0)
-				add_write_fd(revsrv, revsrv->clients[i].sock);
-		}
-		
-		/* do select if necessary */
-		if (revsrv->high_desc != -1)
-		{
-			/* select */
-			int res;
-			struct timeval tv;
-
-			/* select timeout after one second */
-			tv.tv_sec = 1;
-			tv.tv_usec = 0;
-
-			if ((res = select(revsrv->high_desc+1, &revsrv->read_fds,
-					&revsrv->write_fds, NULL, &tv)) == -1)
-			{
-				printf("select() failed : %s\n", strerror(errno));
-				ASSERT(0, "select failed");
-			}
+			printf("Warning: can't accept more rev clients\n");
+			close(tmp_sock);
 		}
 		else
-			usleep(1000); /* prevent cpu load */
-		
-		handle_http_idlers(revsrv);
-
-		if (FD_ISSET(revsrv->rev_listen_sock,
-			&revsrv->read_fds))
 		{
-			struct rev_client *cl = NULL;
-			int tmp_sock;
+			/* add client */
+			cl->sock = tmp_sock;
 
-			if (revsrv->clients[1].sock == -1)
-				cl = &revsrv->clients[1];
-			if (revsrv->clients[0].sock == -1)
-				cl = &revsrv->clients[0];
+			/* empty tcp buffers */
+			fifo_clean(&cl->rev_in_buf);
+			fifo_clean(&cl->rev_out_buf);
 
-			tmp_sock = accept(revsrv->rev_listen_sock, NULL, NULL);
-			ASSERT(tmp_sock != -1, "accept() returned -1")
+			//TODO: do this more smart
+			revsrv->usable_cl = cl;
 
-			if (!cl)
-			{
-				printf("Warning: can't accept more rev clients\n");
-				close(tmp_sock);
-			}
-			else
-			{
-				/* add client */
-				cl->sock = tmp_sock;
+			printf("rev client accepted\n");
 
-				/* empty tcp buffers */
-				fifo_clean(&cl->rev_in_buf);
-				fifo_clean(&cl->rev_out_buf);
-
-				//TODO: do this more smart
-				revsrv->usable_cl = cl;
-
-				printf("rev client accepted\n");
-
-				//const char lo_ip[] = {127, 0, 0, 1};
-				//int id = rev_init_conn(revsrv, ADDR_IPV4, lo_ip, 8080);
-				//printf("NEW conn id %d\n", id);
-			}
+			//const char lo_ip[] = {127, 0, 0, 1};
+			//int id = rev_init_conn(revsrv, ADDR_IPV4, lo_ip, 8080);
+			//printf("NEW conn id %d\n", id);
 		}
+	}
 
-		/* rev clients */
-		if (revsrv->clients[0].sock != -1)
-			handle_rev_client(revsrv, &revsrv->clients[0]);
-		if (revsrv->clients[1].sock != -1)
-			handle_rev_client(revsrv, &revsrv->clients[1]);
+	/* rev clients */
+	if (revsrv->clients[0].sock != -1)
+		handle_rev_client(revsrv, &revsrv->clients[0]);
+	if (revsrv->clients[1].sock != -1)
+		handle_rev_client(revsrv, &revsrv->clients[1]);
 
-		/* handle network handles */
-		for (i = 0; i < MAX_NETWORK_HANDLES; i++)
+	/* handle network handles */
+	for (i = 0; i < MAX_NETWORK_HANDLES; i++)
+	{
+		struct network_handle *hndl = &revsrv->netw_hndls[i];
+		if (hndl->state == NETW_HNDL_OFFLINE)
+			continue;
+
+		if (hndl->state == NETW_HNDL_TCP_INIT_CONNECT)
 		{
-			struct network_handle *hndl = &revsrv->netw_hndls[i];
-			if (hndl->state == NETW_HNDL_OFFLINE)
+			hndl->cl = revsrv_usable_cl(revsrv);
+
+			if (!hndl->cl)
+			{
+				printf("Can't init connection (no cl online)\n");
 				continue;
-
-			if (hndl->state == NETW_HNDL_TCP_INIT_CONNECT)
-			{
-				hndl->cl = revsrv_usable_cl(revsrv);
-
-				if (!hndl->cl)
-				{
-					printf("Can't init connection (no cl online)\n");
-					continue;
-				}
-
-				/* send tcp initiation */
-				struct netmsg msg;
-				char buf[256];
-
-				msg.id = MSG_CONNECT;
-				msg.data = buf;
-
-				if (hndl->dst_addr.type == ADDR_IPV4)
-				{
-					msg.size = 9;
-					
-					*((uint16_t*)buf) = i;
-					*((uint16_t*)(buf+2)) = ADDR_IPV4;
-					*((uint32_t*)(buf+3)) = *((uint32_t*)hndl->dst_addr.addr_data);
-					*((uint16_t*)(buf+7)) = hndl->dst_addr.port;					
-				}
-				else //TODO: implement all addr types
-				{ ASSERT(0, "can't handle non ipv4") }
-
-				rev_send_msg(revsrv, hndl->cl, &msg);
-				hndl->state = NETW_HNDL_TCP_CONNECT;
 			}
-			else if (hndl->state == NETW_HNDL_TCP_FAIL ||
-				hndl->state == NETW_HNDL_TCP_DISC)
-			{
-				hndl->state = NETW_HNDL_OFFLINE;
-				on_netw_hndl_disc(revsrv, i);
-			}
-			else if (hndl->state == NETW_HNDL_TCP_ONLINE)
-			{
-				int len = fifo_len(&hndl->tcp_out_buf);
 
-				if (len > 0)
-				{
-					rev_netmsg_send(revsrv, hndl->cl, i, hndl->tcp_out_buf.data, fifo_len(&hndl->tcp_out_buf));
-					
-					fifo_read(&hndl->tcp_out_buf, NULL, fifo_len(&hndl->tcp_out_buf));
-				}
+			/* send tcp initiation */
+			struct netmsg msg;
+			char buf[256];
+
+			msg.id = MSG_CONNECT;
+			msg.data = buf;
+
+			if (hndl->dst_addr.type == ADDR_IPV4)
+			{
+				msg.size = 9;
+				
+				*((uint16_t*)buf) = i;
+				*((uint16_t*)(buf+2)) = ADDR_IPV4;
+				*((uint32_t*)(buf+3)) = *((uint32_t*)hndl->dst_addr.addr_data);
+				*((uint16_t*)(buf+7)) = hndl->dst_addr.port;					
+			}
+			else //TODO: implement all addr types
+			{ ASSERT(0, "can't handle non ipv4") }
+
+			rev_send_msg(revsrv, hndl->cl, &msg);
+			hndl->state = NETW_HNDL_TCP_CONNECT;
+		}
+		else if (hndl->state == NETW_HNDL_TCP_FAIL ||
+			hndl->state == NETW_HNDL_TCP_DISC)
+		{
+			hndl->state = NETW_HNDL_OFFLINE;
+			on_netw_hndl_disc(revsrv, i);
+		}
+		else if (hndl->state == NETW_HNDL_TCP_ONLINE)
+		{
+			int len = fifo_len(&hndl->tcp_out_buf);
+
+			if (len > 0)
+			{
+				rev_netmsg_send(revsrv, hndl->cl, i, hndl->tcp_out_buf.data, fifo_len(&hndl->tcp_out_buf));
+				
+				fifo_read(&hndl->tcp_out_buf, NULL, fifo_len(&hndl->tcp_out_buf));
 			}
 		}
 	}
@@ -588,28 +575,5 @@ revsrv_send(struct rev_server *revsrv, int netw_hndl, const char *data, int size
 	int res = fifo_write(&hndl->tcp_out_buf, data, size);
 	ASSERT(res == 0, "session out buf overflow")
 	return (res==0) ? 0 : -1;
-}
-
-int
-main(int argc, char **argv)
-{
-	struct rev_server revsrv;
-
-	#define PHP_URL "http://localhost:8080/sockssrv.php"
-	#define BIND_PORT 3443
-	#define BIND_IP "127.0.0.1"
-
-	revsrv_init(&revsrv, BIND_IP, BIND_PORT, PHP_URL);
-
-	//TESTING
-	struct netaddr addr;
-	netaddr_init_ipv4(&addr, "127.0.0.1", 2222);
-	int netwhndl = revsrv_init_conn(&revsrv, &addr);
-	revsrv_send(&revsrv, netwhndl, "hallo\n", 6);
-
-	/* give control to rev server */
-	revsrv_run(&revsrv);
-
-	return EXIT_SUCCESS;	
 }
 

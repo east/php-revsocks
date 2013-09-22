@@ -93,9 +93,8 @@ struct rev_server
 	char bind_ip[128];
 	int bind_port;
 
-	int high_desc;
-	fd_set read_fds;
-	fd_set write_fds;
+	fd_set *read_fds;
+	fd_set *write_fds;
 
 	/* used to create http idlers periodically */
 	time_t new_idler_date;
@@ -106,7 +105,8 @@ struct rev_server
 
 void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 					int bind_port, const char *http_url);
-void revsrv_run(struct rev_server *revsrv);
+int revsrv_get_fds(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds);
+void revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds);
 struct rev_client *revsrv_usable_cl(struct rev_server *revsrv);
 struct network_handle *revsrv_netw_hndl(struct rev_server *revsrv, int id);
 
