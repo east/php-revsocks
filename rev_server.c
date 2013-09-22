@@ -133,6 +133,8 @@ init_http_idler(struct rev_server *revsrv)
 		return -2;
 	}
 
+    http_cl->addr.sin_addr = *((struct in_addr*)host_addr->h_addr);
+
 	/* add port to http host if necessary */
 	if (port != -1)
 	{
