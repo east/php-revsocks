@@ -3,7 +3,7 @@
 
 	function dbg_log($str)
 	{
-		$file = fopen("phpsocks.log", "a+");		
+		$file = fopen("phpsocks.log", "a+");
 		fwrite($file, $str."\n");
 		fclose($file);
 	}

@@ -16,7 +16,8 @@
 		$str_len = 0;
 
 		for ($i = 0; $i < $len; $i++) {
-			$char_ord = unpack("c", substr($buf, $i, 1))[1];
+			$char_ord = unpack("c", substr($buf, $i, 1));
+			$char_ord = $char_ord[1];
 			if ($char_ord == 0)
 				break; // cstring end
 			$str_len++;
@@ -47,14 +48,18 @@
 	function buf_skip(&$buf, $len) { $buf = substr($buf, $len); }
 	function buf_get_uint8(&$buf, $do_skip=true)
 	{
-		$num = unpack("C", $buf)[1];
+		$num = unpack("C", $buf);
+		$num = $num[1];
+
 		if ($do_skip)
 			buf_skip($buf, 1);
 		return $num;
 	}
 	function buf_get_uint16(&$buf, $do_skip=true)
 	{
-		$num = unpack("S", $buf)[1];
+		$num = unpack("S", $buf);
+		$num = $num[1];
+
 		if ($do_skip)
 			buf_skip($buf, 2);
 		return $num;
