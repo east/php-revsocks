@@ -57,6 +57,7 @@ struct network_handle
 	int state;
 	int id;
 	struct rev_client *cl;
+	void *user_ptr;
 
 	struct netaddr dst_addr;
 
@@ -111,7 +112,7 @@ struct rev_server
 	struct network_handle netw_hndls[MAX_NETWORK_HANDLES];
 };
 
-void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
+int revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 					int bind_port, const char *http_url, int http_timeout);
 int revsrv_get_fds(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds);
 void revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds);
@@ -123,8 +124,17 @@ int revsrv_new_netw_hndl(struct rev_server *revsrv);
 void revsrv_free_netw_hndl(struct rev_server *revsrv, int id);
 
 /* initiate a tcp connection (returns: connection handle id) */
-int revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr);
+int revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr, void *user_ptr);
 
 int revsrv_send(struct rev_server *revsrv, int netw_handle, const char *data, int size);
+
+enum
+{
+	REV_CONN_PENDING=0,
+	REV_CONN_ONLINE,
+	REV_CONN_FAILED,
+};
+
+int revsrv_conn_state(struct rev_server *revsrv, int netw_hndl);
 
 #endif

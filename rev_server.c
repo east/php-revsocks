@@ -36,7 +36,7 @@ reset_http_idlers(struct rev_server *revsrv)
 	}
 }
 
-void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
+int revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 					int bind_port, const char *http_url, int http_timeout)
 {
 	int i;
@@ -81,17 +81,18 @@ void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 		(struct sockaddr*)&addr, sizeof(addr)) != 0)
 	{
 		printf("bind() : %s\n", strerror(errno));
-		return;
+		return -1;
 	}
 
 	/* listening mode */
 	if (listen(revsrv->rev_listen_sock, 2) != 0)
 	{
 		printf("listen() : %s\n", strerror(errno));
-		return;
+		return -1;
 	}
 
-	printf("listening on %s:%d\n", revsrv->bind_ip, revsrv->bind_port);
+	printf("[rev] listening on %s:%d\n", revsrv->bind_ip, revsrv->bind_port);
+	return 0;
 }
 
 static int
@@ -447,10 +448,6 @@ revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
 			revsrv->usable_cl = cl;
 
 			printf("rev client accepted\n");
-
-			//const char lo_ip[] = {127, 0, 0, 1};
-			//int id = rev_init_conn(revsrv, ADDR_IPV4, lo_ip, 8080);
-			//printf("NEW conn id %d\n", id);
 		}
 	}
 
@@ -563,7 +560,7 @@ revsrv_netw_hndl(struct rev_server *revsrv, int id)
 }
 
 int
-revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr)
+revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr, void *user_ptr)
 {
 	int netw_hndl;
 
@@ -575,6 +572,7 @@ revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr)
 	struct network_handle *hndl = revsrv_netw_hndl(revsrv, netw_hndl);
 
 	hndl->state = NETW_HNDL_TCP_INIT_CONNECT;
+	hndl->user_ptr = user_ptr;
 	hndl->cl = NULL;
 	memcpy(&hndl->dst_addr, addr, sizeof(hndl->dst_addr));
 
@@ -592,3 +590,19 @@ revsrv_send(struct rev_server *revsrv, int netw_hndl, const char *data, int size
 	return (res==0) ? 0 : -1;
 }
 
+int
+revsrv_conn_state(struct rev_server *revsrv, int netw_hndl)
+{
+	struct network_handle *hndl = revsrv_netw_hndl(revsrv, netw_hndl);
+
+	if (hndl->state == NETW_HNDL_OFFLINE ||
+		hndl->state == NETW_HNDL_TCP_FAIL ||
+		hndl->state == NETW_HNDL_TCP_DISC)
+		return REV_CONN_FAILED;
+
+	if (hndl->state == NETW_HNDL_TCP_INIT_CONNECT ||
+		hndl->state == NETW_HNDL_TCP_CONNECT)
+		return REV_CONN_PENDING;
+
+	return REV_CONN_ONLINE;
+}
