@@ -37,7 +37,7 @@ reset_http_idlers(struct rev_server *revsrv)
 }
 
 void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
-					int bind_port, const char *http_url)
+					int bind_port, const char *http_url, int http_timeout)
 {
 	int i;
 
@@ -50,6 +50,8 @@ void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 	init_client(&revsrv->clients[1]);
 
 	revsrv->usable_cl = NULL;
+
+    revsrv->http_timeout = http_timeout;
 
 	strncpy(revsrv->bind_ip, bind_ip, sizeof(revsrv->bind_ip));
 	revsrv->bind_port = bind_port;
@@ -237,23 +239,34 @@ handle_http_idlers(struct rev_server *revsrv)
 				cl->state = HTTP_IDLER_OFFLINE;
 			}
 		}
-		else if(cl->state == HTTP_IDLER_ONLINE && FD_ISSET(cl->sock, revsrv->read_fds))
+		else if(cl->state == HTTP_IDLER_ONLINE)
 		{
-			/* receive data */
-			char buf[2048];
-			int res = recv(cl->sock, buf, sizeof(buf), 0);
-
-			if (res <= 0)
+			if (FD_ISSET(cl->sock, revsrv->read_fds))
 			{
-				if (res == 0)
-					printf("http idler %d disconnected (%d seconds online)\n", i, (int)(now-cl->date));
-				else
-					printf("http idler error recv() : %s\n", strerror(errno));
+				/* receive data */
+				char buf[2048];
+				int res = recv(cl->sock, buf, sizeof(buf), 0);
 
+				if (res <= 0)
+				{
+					if (res == 0)
+						printf("http idler %d disconnected (%d seconds online)\n", i, (int)(now-cl->date));
+					else
+						printf("http idler error recv() : %s\n", strerror(errno));
+
+					close(cl->sock);
+					cl->state = HTTP_IDLER_OFFLINE;
+
+					revsrv->last_idler_lifetime = (int)(now-cl->date);
+				}
+			}
+
+			/* check for http timeout */
+			if (now - cl->date >= revsrv->http_timeout-1)
+			{
+				printf("http idler disconnect (preventing http timeout)\n");	
 				close(cl->sock);
 				cl->state = HTTP_IDLER_OFFLINE;
-
-				revsrv->last_idler_lifetime = (int)(now-cl->date);
 			}
 		}
 	}

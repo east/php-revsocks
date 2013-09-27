@@ -93,6 +93,14 @@ struct rev_server
 	char bind_ip[128];
 	int bind_port;
 
+	/*
+		we expect the websrv to close the
+		connection after about 60 seconds.
+		the http idlers should close the connection
+		before this happens
+	*/
+	int http_timeout;
+
 	fd_set *read_fds;
 	fd_set *write_fds;
 
@@ -104,7 +112,7 @@ struct rev_server
 };
 
 void revsrv_init(struct rev_server *revsrv, const char *bind_ip,
-					int bind_port, const char *http_url);
+					int bind_port, const char *http_url, int http_timeout);
 int revsrv_get_fds(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds);
 void revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds);
 struct rev_client *revsrv_usable_cl(struct rev_server *revsrv);

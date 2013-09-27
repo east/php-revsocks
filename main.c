@@ -21,8 +21,9 @@ main (int argc, char **argv)
 	#define PHP_URL "http://localhost:8080/sockssrv.php"
 	#define BIND_PORT 3443
 	#define BIND_IP "127.0.0.1"
+	#define HTTP_TIMEOUT 60
 
-	revsrv_init(&revsrv, BIND_IP, BIND_PORT, PHP_URL);
+	revsrv_init(&revsrv, BIND_IP, BIND_PORT, PHP_URL, HTTP_TIMEOUT);
 
 	//TESTING
 	struct netaddr addr;
