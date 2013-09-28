@@ -198,9 +198,6 @@
 		exit();
 	}
 
-	send_dbg("hallo");
-	send_msg(MSG_PING);
-
 	while(1)
 	{
 		$rsocks = array($srv_sock);

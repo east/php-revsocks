@@ -272,14 +272,10 @@ handle_http_idlers(struct rev_server *revsrv)
 		}
 	}
 
-	if (/*(revsrv->new_idler_date != -1 && revsrv->new_idler_date <= now) ||
-			idlers_online == 0*/revsrv->new_idler_date == 0)
+	if (revsrv->new_idler_date != -1 && revsrv->new_idler_date <= now)
 	{
 		init_http_idler(revsrv);
-		revsrv->new_idler_date = now;
-
-	//	if (revsrv->last_idler_lifetime > 0)
-	//		revsrv->new_idler_date = now+revsrv->last_idler_lifetime/2;
+		revsrv->new_idler_date = now + (int)(revsrv->http_timeout*0.75f);
 	}
 }
 
