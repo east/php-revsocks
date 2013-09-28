@@ -3,7 +3,9 @@
 
 enum
 {
-	BUF_SIZE=4096,
+	NETWORK_BUF_SIZE=4096*4,
+	TMP_BUF_SIZE=4096,
+	MAX_MSG_SIZE=4096,
 
 	// msg types
 	MSG_DBGMSG=0, /* <str> */

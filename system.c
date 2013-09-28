@@ -51,3 +51,17 @@ void netaddr_init_ipv4(struct netaddr *addr, const char *ip, int port)
 	*((uint32_t*)addr->addr_data) = inet_addr(ip);
 	addr->port = port;
 }
+
+int min(int x, int y)
+{
+	if (x > y)
+		return x;
+	return y;
+}
+
+int max(int x, int y)
+{
+	if (x > y)
+		return x;
+	return y;
+}

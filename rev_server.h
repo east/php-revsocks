@@ -1,13 +1,13 @@
 #ifndef REV_SERVER_H
 #define REV_SERVER_H
 
+#include "protocol.h"
 #include "fifobuf.h"
 
 #include <netinet/in.h>
 
 enum
 {
-	TCP_BUF_SIZE=4096,
 	MAX_HTTP_IDLERS=4,
 	MAX_NETWORK_HANDLES=64,
 };
@@ -19,8 +19,8 @@ struct rev_client
 	/* tcp buffers */
 	struct FIFOBUF rev_in_buf;
 	struct FIFOBUF rev_out_buf;
-	char in_buf[TCP_BUF_SIZE];
-	char out_buf[TCP_BUF_SIZE];
+	char in_buf[NETWORK_BUF_SIZE];
+	char out_buf[NETWORK_BUF_SIZE];
 };
 
 enum
@@ -64,8 +64,10 @@ struct network_handle
 	/* tcp buffers */
 	struct FIFOBUF tcp_in_buf;
 	struct FIFOBUF tcp_out_buf;
-	char in_buf[TCP_BUF_SIZE];
-	char out_buf[TCP_BUF_SIZE];
+	char in_buf[NETWORK_BUF_SIZE];
+	char out_buf[NETWORK_BUF_SIZE];
+
+	int terminate;
 };
 
 struct rev_server
@@ -115,6 +117,7 @@ struct rev_server
 int revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 					int bind_port, const char *http_url, int http_timeout);
 int revsrv_get_fds(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds);
+int revsrv_max_block_time(struct rev_server *revsrv);
 void revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds);
 struct rev_client *revsrv_usable_cl(struct rev_server *revsrv);
 struct network_handle *revsrv_netw_hndl(struct rev_server *revsrv, int id);
@@ -126,7 +129,9 @@ void revsrv_free_netw_hndl(struct rev_server *revsrv, int id);
 /* initiate a tcp connection (returns: connection handle id) */
 int revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr, void *user_ptr);
 
-int revsrv_send(struct rev_server *revsrv, int netw_handle, const char *data, int size);
+int revsrv_cl_send(struct rev_server *revsrv, int netw_handle, const char *data, int size);
+void revsrv_cl_close(struct rev_server *revsrv, int netw_hndl);
+int revsrv_cl_recv(struct rev_server *revsrv, int netw_hndl, char *dst, int size);
 
 enum
 {

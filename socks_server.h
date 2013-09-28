@@ -56,10 +56,8 @@ typedef int (*cb_conn_state)(void *userdata);
 typedef void (*cb_on_data)(void *userdata, char *data, int size);
 /* disconnected */
 typedef void (*cb_on_disc)(void *userdata);
-/* receive data from server. the size of data is stored int *size. */
-/* the size of received data need to be stored in *size. */
-/* *size = -1 indicates a server disconnect */
-typedef void (*cb_get_data)(void *userdata, char *data, int *size);
+/* receive data from server. return -1 indicates disconnect */
+typedef int (*cb_get_data)(void *userdata, char *data, int size);
 
 typedef struct
 {
@@ -74,12 +72,15 @@ typedef struct
 	cb_on_data on_data;
 	cb_on_disc on_disc;
 	cb_get_data get_data;
+
+	int ignore_sel_timeout;
 } S5SRV;
 
 int s5srv_init(S5SRV *srv, const char *bind_host, int listening_port, cb_new_connect new_connect, cb_conn_state conn_state, cb_on_data on_data, cb_on_disc on_disc, cb_get_data get_data);
 void s5srv_close(S5SRV *srv);
 int s5srv_tick(S5SRV *srv, int block);
 int s5srv_get_fds(S5SRV *srv, fd_set *rfds, fd_set *wfds);
+int s5srv_max_block_time(S5SRV *srv);
 int s5srv_tick_ex(S5SRV *srv, fd_set *rfds, fd_set *wfds);
 /* size = 0 means connection close */
 void s5srv_send(S5SRV_CL *cl, char *data, size_t size);

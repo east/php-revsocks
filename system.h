@@ -22,5 +22,7 @@ int create_tcp_socket();
 void socket_set_block(int sock, int block);
 void socket_set_linger(int sock);
 void netaddr_init_ipv4(struct netaddr *addr, const char *ip, int port);
+int min(int x, int y);
+int max(int x, int y);
 
 #endif

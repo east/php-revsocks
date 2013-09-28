@@ -19,7 +19,6 @@
 
 		$msg_size = buf_get_uint16($tcp_in_buf, false);
 		$msg_id = buf_get_uint8(substr($tcp_in_buf, 2), false);
-		dbg_log("msg ".$msg_id." len ".$msg_size);
 
 		if (mb_strlen($tcp_in_buf) < 3 + $msg_size)
 			return false; // not enough data
@@ -76,14 +75,25 @@
 			$s_id = buf_get_uint16($tcp_in_buf);
 			$size = buf_get_uint16($tcp_in_buf);
 			$data = buf_get_data($tcp_in_buf, $size);
-		
-			if ($size > buf_space_left($sessions[$s_id]['out_buf']))
+	
+			if ($size == 0)
 			{
-				dbg_log("session out buffer overflow");
-				exit();
+				dbg_log("revsrv wants to disconnect session ".$s_id);
+			
+				socket_close($s['sock']);
+				// unset session in array
+				unset($s);
 			}
+			else
+			{
+				if ($size > buf_space_left($sessions[$s_id]['out_buf']))
+				{
+					dbg_log("session out buffer overflow");
+					exit();
+				}
 
-			buf_put_data($sessions[$s_id]['out_buf'], $data);
+				buf_put_data($sessions[$s_id]['out_buf'], $data);
+			}
 		}
 		else
 			buf_skip($tcp_in_buf, $msg_size);
@@ -105,7 +115,7 @@
 			return false;
 		}
 		
-		dbg_log($res." bytes sent");
+		//dbg_log($res." bytes sent");
 		buf_skip($tcp_out_buf, $res);
 
 		return true;
@@ -135,10 +145,11 @@
 
 	function buf_space_left(&$buf)
 	{
-		return BUF_SIZE - buf_len($buf);
+		return NETWORK_BUF_SIZE - buf_len($buf);
 	}
 
-	const BUF_SIZE=4096;
+	const NETWORK_BUF_SIZE=16384; //4*4096
+	const MAX_MSG_SIZE=4096;
 	
 	// msg ids
 	const MSG_DBGMSG=0;
@@ -224,7 +235,6 @@
 		$buf;
 		if (in_array($srv_sock, $rsocks))
 		{
-			dbg_log("recv isset");
 			$res = socket_recv($srv_sock, $buf, 2048, 0);
 
 			if ($res && $res > 0)
@@ -305,7 +315,7 @@
 					}
 					else
 					{
-						dbg_log("session ".$s_id." got ".$res." bytes");				
+						//dbg_log("session ".$s_id." got ".$res." bytes");				
 						buf_put_data($s['in_buf'], $buf);
 					}
 				}
@@ -314,12 +324,14 @@
 				$len = buf_len($s['in_buf']);
 				if ($len > 0)
 				{
+					if ($len > MAX_MSG_SIZE-4)
+						$len = MAX_MSG_SIZE-4;
 					$msg = "";
 					buf_put_int16($msg, $s_id);
 					buf_put_int16($msg, $len);
-					buf_put_data($msg, $s['in_buf']);
+					$buf_data = buf_get_data($s['in_buf'], $len);
+					buf_put_data($msg, $buf_data);
 					send_msg(MSG_SEND, $msg);
-					buf_skip($s['in_buf'], $len);
 				}
 
 				// send avaiable data to our destination host

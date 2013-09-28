@@ -41,6 +41,12 @@
 	}
 	function buf_get_data(&$buf, $size)
 	{
+		if (buf_len($buf) < $size)
+			$size = buf_len($buf);
+
+		if ($size == 0)
+			return "";
+
 		$data = substr($buf, 0, $size);
 		buf_skip($buf, $size);
 		return $data;

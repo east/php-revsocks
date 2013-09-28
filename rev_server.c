@@ -297,6 +297,9 @@ on_rev_disc(struct rev_server *revsrv, struct rev_client *cl)
 	for (i = 0; i < MAX_NETWORK_HANDLES; i++)
 	{
 		struct network_handle *hndl = &revsrv->netw_hndls[i];
+		
+		if (hndl->state == NETW_HNDL_OFFLINE)
+			continue;
 
 		if (hndl->cl == cl)
 		{
@@ -305,6 +308,18 @@ on_rev_disc(struct rev_server *revsrv, struct rev_client *cl)
 		}
 	}
 
+}
+
+static void
+rev_close(struct rev_server *revsrv, struct rev_client *cl)
+{
+	close(cl->sock);
+	cl->sock = -1;
+	
+	if (revsrv->usable_cl == cl)
+		revsrv->usable_cl = NULL;
+
+	on_rev_disc(revsrv, cl);
 }
 
 static void
@@ -325,9 +340,8 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 			else
 				printf("rev client recv() : %s\n", strerror(errno));
 
-			close(cl->sock);
-			cl->sock = -1;
-			on_rev_disc(revsrv, cl);
+			disc_client = 1;
+			goto _exit;
 		}
 		else
 		{
@@ -337,8 +351,6 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 				printf("rev client tcp in buffer is full\n");
 				ASSERT(0, "tcp in buf overflow")
 			}
-
-			printf("stored %d bytes\n", res);
 		}
 	}
 
@@ -358,17 +370,11 @@ handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 		}
 		else
 			fifo_read(&cl->rev_out_buf, NULL, bytes);
-
-		printf("cl %d bytes sent\n", bytes);
 	}
 
-
+_exit:
 	if (disc_client)
-	{
-		if (revsrv->usable_cl == cl)
-			revsrv->usable_cl = NULL;
-		close(cl->sock);
-	}
+		rev_close(revsrv, cl);
 }
 
 int
@@ -457,6 +463,8 @@ revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
 	if (revsrv->clients[1].sock != -1)
 		handle_rev_client(revsrv, &revsrv->clients[1]);
 
+	int online_handles = 0;
+
 	/* handle network handles */
 	for (i = 0; i < MAX_NETWORK_HANDLES; i++)
 	{
@@ -464,8 +472,16 @@ revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
 		if (hndl->state == NETW_HNDL_OFFLINE)
 			continue;
 
+		online_handles++;
+
 		if (hndl->state == NETW_HNDL_TCP_INIT_CONNECT)
 		{
+			if (hndl->terminate)
+			{
+				hndl->state = NETW_HNDL_OFFLINE;
+				continue;
+			}
+
 			hndl->cl = revsrv_usable_cl(revsrv);
 
 			if (!hndl->cl)
@@ -500,7 +516,6 @@ revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
 			hndl->state == NETW_HNDL_TCP_DISC)
 		{
 			hndl->state = NETW_HNDL_OFFLINE;
-			on_netw_hndl_disc(revsrv, i);
 		}
 		else if (hndl->state == NETW_HNDL_TCP_ONLINE)
 		{
@@ -512,8 +527,22 @@ revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
 				
 				fifo_read(&hndl->tcp_out_buf, NULL, fifo_len(&hndl->tcp_out_buf));
 			}
+
+			if (hndl->terminate)
+			{
+				/* close handle / connection */
+				rev_netmsg_send(revsrv, hndl->cl, i, NULL, 0);
+				hndl->state = NETW_HNDL_OFFLINE;
+				printf("disconnect has been sent\n");
+			}
 		}
 	}
+}
+
+
+void revsrv_cl_close(struct rev_server *revsrv, int netw_hndl)
+{
+	revsrv_netw_hndl(revsrv, netw_hndl)->terminate = 1;
 }
 
 struct rev_client*
@@ -574,13 +603,14 @@ revsrv_init_conn(struct rev_server *revsrv, struct netaddr *addr, void *user_ptr
 	hndl->state = NETW_HNDL_TCP_INIT_CONNECT;
 	hndl->user_ptr = user_ptr;
 	hndl->cl = NULL;
+	hndl->terminate = 0;
 	memcpy(&hndl->dst_addr, addr, sizeof(hndl->dst_addr));
 
-	return 0;
+	return netw_hndl;
 }
 
 int
-revsrv_send(struct rev_server *revsrv, int netw_hndl, const char *data, int size)
+revsrv_cl_send(struct rev_server *revsrv, int netw_hndl, const char *data, int size)
 {
 	struct network_handle *hndl =
 			revsrv_netw_hndl(revsrv, netw_hndl);
@@ -588,6 +618,14 @@ revsrv_send(struct rev_server *revsrv, int netw_hndl, const char *data, int size
 	int res = fifo_write(&hndl->tcp_out_buf, data, size);
 	ASSERT(res == 0, "session out buf overflow")
 	return (res==0) ? 0 : -1;
+}
+
+
+int revsrv_cl_recv(struct rev_server *revsrv, int netw_hndl, char *dst, int size)
+{
+	struct network_handle *hndl =
+			revsrv_netw_hndl(revsrv, netw_hndl);
+	return fifo_read(&hndl->tcp_in_buf, dst, size);
 }
 
 int
@@ -605,4 +643,9 @@ revsrv_conn_state(struct rev_server *revsrv, int netw_hndl)
 		return REV_CONN_PENDING;
 
 	return REV_CONN_ONLINE;
+}
+
+int revsrv_max_block_time(struct rev_server *revsrv)
+{
+	return -1;
 }

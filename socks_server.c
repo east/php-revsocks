@@ -9,6 +9,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+#include "system.h"
 #include "socks.h"
 #include "socks_server.h"
 
@@ -36,7 +37,8 @@ s5srv_init(S5SRV *srv, const char *bind_host, int listening_port, cb_new_connect
 
 	srv->error = 0;
 	/* create socket */
-	srv->socket = socket(AF_INET, SOCK_STREAM, 0);
+	srv->socket = create_tcp_socket();
+	socket_set_linger(srv->socket);
 
 	if (srv->socket == -1)
 	{
@@ -326,9 +328,9 @@ handle_client(S5SRV *srv, fd_set *fds, int id)
 	{
 		/* receive data from server */
 		char data[2048];
-		int size = sizeof(data);
+		int size;
 
-		srv->get_data(cl->conn_cb_user, data, &size);
+		size = srv->get_data(cl->conn_cb_user, data, sizeof(data));
 
 		if (size == -1)
 		{
@@ -409,5 +411,10 @@ s5srv_send(S5SRV_CL *cl, char *data, size_t size)
 		send(cl->socket, data, size, 0);
 	else
 		cl->state = S5SRV_CL_SHUTDOWN;	
+}
+
+int s5srv_max_block_time(S5SRV *srv)
+{
+	return -1;
 }
 

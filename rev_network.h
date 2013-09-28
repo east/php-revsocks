@@ -6,11 +6,6 @@
 #include "protocol.h"
 #include "rev_server.h" /* struct rev_client */
 
-enum
-{
-	MAX_MSG_SIZE=BUF_SIZE,
-};
-
 struct netmsg
 {
 	int id;

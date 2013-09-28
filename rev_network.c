@@ -52,7 +52,7 @@ handle_buffer(struct rev_server *revsrv, struct rev_client *cl)
 	msg.size = msg_size;
 	msg.data = buf;
 
-	printf("got msg id %d size %d\n", msg_id, msg_size);
+	//printf("got msg id %d size %d\n", msg_id, msg_size);
 	/* read and handle message */
 	fifo_read(inbuf, buf, msg_size);
 	ASSERT(handle_msg(revsrv, cl, &msg) == 0, "invalid msg");
@@ -73,8 +73,8 @@ handle_msg(struct rev_server *revsrv, struct rev_client *cl, struct netmsg *msg)
 		printf("got ping, send pong\n");
 		rev_send_msg(revsrv, cl, empty_msg(MSG_PONG));
 	}
-	else if(msg->id == MSG_PONG)
-		printf("got pong\n");
+	//else if(msg->id == MSG_PONG)
+	//	printf("got pong\n");
 	else if(msg->id == MSG_CONN_STATE)
 	{
 		const char *p = msg->data;
@@ -105,6 +105,8 @@ handle_msg(struct rev_server *revsrv, struct rev_client *cl, struct netmsg *msg)
 		{
 			hndl->state = NETW_HNDL_TCP_DISC;
 		}
+		else if(hndl->state == NETW_HNDL_OFFLINE)
+			printf("WARNING: conn state on offline handle\n");
 		else { ASSERT(0, "invalid state") }
 	}
 	else if (msg->id == MSG_SEND)
@@ -116,7 +118,7 @@ handle_msg(struct rev_server *revsrv, struct rev_client *cl, struct netmsg *msg)
 
 		ASSERT(msg->size == size+4, "invalid size")
 
-		printf("data from session %d size %d\n", session_id, size);
+		//printf("data from session %d size %d\n", session_id, size);
 
 
 		struct network_handle *hndl =
@@ -168,7 +170,7 @@ void rev_netmsg_send(struct rev_server *revsrv, struct rev_client *cl,
 					int netw_hndl, const char *data, int size)
 {
 	struct netmsg msg;
-	char buf[TCP_BUF_SIZE];
+	char buf[MAX_MSG_SIZE];
 
 	msg.id = MSG_SEND;
 	msg.size = 4 + size;
