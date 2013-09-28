@@ -330,15 +330,20 @@ handle_client(S5SRV *srv, fd_set *fds, int id)
 		char data[2048];
 		int size;
 
-		size = srv->get_data(cl->conn_cb_user, data, sizeof(data));
-
-		if (size == -1)
-		{
-			/* server disconnected */
+		if (srv->conn_state(cl->conn_cb_user) == S5SRV_CB_CONN_FAILED)
 			cl->state = S5SRV_CL_SHUTDOWN;
+		else
+		{
+			size = srv->get_data(cl->conn_cb_user, data, sizeof(data));
+
+			if (size == -1)
+			{
+				/* server disconnected */
+				cl->state = S5SRV_CL_SHUTDOWN;
+			}
+			else if (size > 0)
+				send(cl->socket, data, size, 0);
 		}
-		else if (size > 0)
-			send(cl->socket, data, size, 0);
 	}
 	else if (cl->state == S5SRV_CL_SHUTDOWN)
 	{
