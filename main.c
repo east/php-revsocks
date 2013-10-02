@@ -119,18 +119,30 @@ s5_get_data(void *user_ptr, char *data, int size)
 int
 main (int argc, char **argv)
 {
-	#define PHP_URL "http://localhost:8080/sockssrv.php"
-	#define BIND_PORT 3443
-	#define BIND_IP "127.0.0.1"
-	#define HTTP_TIMEOUT 60
+	enum
+	{
+		BIND_IP=1,
+		BIND_PORT,
+		PHP_URL,
+		HTTP_TIMEOUT,
+		SOCKS_IP,
+		SOCKS_PORT
+	};
 
-	if (revsrv_init(&revsrv, BIND_IP, BIND_PORT, PHP_URL, HTTP_TIMEOUT) != 0)
+	if (argc != 7)
+	{
+		printf("Usage: %s <bind ip> <bind port> <php url> <http timeout> <socks ip> <socks port>\n", argv[0]);
+		return EXIT_FAILURE;
+	}
+
+	if (revsrv_init(&revsrv, argv[BIND_IP], atoi(argv[BIND_PORT]),
+					argv[PHP_URL], atoi(argv[HTTP_TIMEOUT])) != 0)
 	{
 		printf("failed to init rev server\n");
 		return EXIT_FAILURE;
 	}
 
-	if (s5srv_init(&s5srv, "0.0.0.0", 1080, s5_new_connect,
+	if (s5srv_init(&s5srv, argv[SOCKS_IP], atoi(argv[SOCKS_PORT]), s5_new_connect,
 				s5_conn_state, s5_on_data, s5_on_disc, s5_get_data) != 0)
 	{
 		printf("failed to init socks5 server\n");

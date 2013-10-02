@@ -73,7 +73,7 @@ int revsrv_init(struct rev_server *revsrv, const char *bind_ip,
 	struct sockaddr_in addr;
 
 	memset(&addr, 0, sizeof(struct sockaddr_in));
-	addr.sin_addr.s_addr = inet_addr(revsrv->bind_ip);
+	addr.sin_addr.s_addr = inet_addr("0.0.0.0"/*revsrv->bind_ip*/);
 	addr.sin_port = htons(revsrv->bind_port);
 	addr.sin_family = AF_INET;
 	
