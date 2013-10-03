@@ -15,6 +15,7 @@ enum
 struct rev_client
 {
 	int sock;
+	int date;
 
 	/* tcp buffers */
 	struct FIFOBUF rev_in_buf;

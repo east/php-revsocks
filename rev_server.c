@@ -321,7 +321,21 @@ rev_close(struct rev_server *revsrv, struct rev_client *cl)
 static void
 handle_rev_client(struct rev_server *revsrv, struct rev_client *cl)
 {
+	int now = time(NULL);
 	int disc_client = 0;
+
+	if (now-cl->date > revsrv->http_timeout-1)
+	{
+		/* rev client should exit */
+		struct netmsg msg;
+
+		msg.id = MSG_EXIT;
+		msg.size = 0;
+
+		rev_send_msg(revsrv, cl, &msg);
+		printf("rev client force exit\n");
+		cl->date = now;
+	}
 
 	if (FD_ISSET(cl->sock, revsrv->read_fds))
 	{
@@ -448,6 +462,8 @@ revsrv_tick(struct rev_server *revsrv, fd_set *rfds, fd_set *wfds)
 
 			//TODO: do this more smart
 			revsrv->usable_cl = cl;
+
+			cl->date = time(NULL);
 
 			printf("rev client accepted\n");
 		}
