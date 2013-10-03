@@ -80,9 +80,9 @@
 			{
 				dbg_log("revsrv wants to disconnect session ".$s_id);
 			
-				socket_close($s['sock']);
+				socket_close($sessions[$s_id]['sock']);
 				// unset session in array
-				unset($s);
+				unset($sessions[$s_id]);
 			}
 			else
 			{
@@ -181,6 +181,7 @@
 	$dst_ip = $_GET['ip'];
 	$dst_port = (int)$_GET['port'];
 	$sessions = array();
+	$do_shutdown = false;
 
 	$srv_sock = socket_create(AF_INET, SOCK_STREAM, 0);
 	
@@ -198,7 +199,7 @@
 		exit();
 	}
 
-	while(1)
+	while(!$do_shutdown)
 	{
 		$rsocks = array($srv_sock);
 		$wsocks = array();
@@ -343,4 +344,17 @@
 			}
 		}
 	}
+
+	// shutdown
+	dbg_log("shutdown");
+
+	// close all sessions
+	foreach ($sessions as $s_id => &$s)
+	{
+		if ($s['state'] == SESSION_CONNECTING ||
+				$s['state'] == SESSION_ONLINE)
+			@socket_close($s['sock']);
+	}
+
+	@socket_close($srv_sock);
 ?>
